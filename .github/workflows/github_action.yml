@@ -2,25 +2,22 @@ name: DNS Block&Redirect Configurer cron task
 
 on:
   schedule:
-    - cron: '30 1 * * *' # 04:30 MSK (01:30 UTC)
+    - cron: '30 1 * * *'
   workflow_dispatch:
 
 jobs:
-  build:
+  build-my-dns:
+    name: Update My DNS
     runs-on: ubuntu-latest
     environment: DNS
-
     env:
       DNS: ${{ vars.DNS }}
       BLOCK: ${{ vars.BLOCK }}
       REDIRECT: ${{ vars.REDIRECT }}
       EXCLUDE_REDIRECT: ${{ vars.EXCLUDE_REDIRECT }}
-
       CLIENT_ID: ${{ secrets.CLIENT_ID }}
       AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
-
       TZ: Europe/Moscow
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -36,6 +33,91 @@ jobs:
         run: mvn -B clean package
 
       - name: Run application
-        run: |
-          echo "Starting application..."
-          java --enable-preview -jar target/*.jar
+        run: java --enable-preview -jar target/*.jar
+
+  build-wife-dns:
+    name: Update Wife DNS
+    runs-on: ubuntu-latest
+    environment: DNS_WIFE
+    env:
+      DNS: ${{ vars.DNS }}
+      BLOCK: ${{ vars.BLOCK }}
+      REDIRECT: ${{ vars.REDIRECT }}
+      EXCLUDE_REDIRECT: ${{ vars.EXCLUDE_REDIRECT }}
+      CLIENT_ID: ${{ secrets.CLIENT_ID }}
+      AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+      TZ: Europe/Moscow
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Build with Maven
+        run: mvn -B clean package
+
+      - name: Run application
+        run: java --enable-preview -jar target/*.jar
+
+  build-director-dns:
+    name: Update Director DNS
+    runs-on: ubuntu-latest
+    environment: DNS_DIRECTOR
+    env:
+      DNS: ${{ vars.DNS }}
+      BLOCK: ${{ vars.BLOCK }}
+      REDIRECT: ${{ vars.REDIRECT }}
+      EXCLUDE_REDIRECT: ${{ vars.EXCLUDE_REDIRECT }}
+      CLIENT_ID: ${{ secrets.CLIENT_ID }}
+      AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+      TZ: Europe/Moscow
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Build with Maven
+        run: mvn -B clean package
+
+      - name: Run application
+        run: java --enable-preview -jar target/*.jar
+
+  build-pv-dns:
+    name: Update PV DNS
+    runs-on: ubuntu-latest
+    environment: DNS_PV
+    env:
+      DNS: ${{ vars.DNS }}
+      BLOCK: ${{ vars.BLOCK }}
+      REDIRECT: ${{ vars.REDIRECT }}
+      EXCLUDE_REDIRECT: ${{ vars.EXCLUDE_REDIRECT }}
+      CLIENT_ID: ${{ secrets.CLIENT_ID }}
+      AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+      TZ: Europe/Moscow
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Build with Maven
+        run: mvn -B clean package
+
+      - name: Run application
+        run: java --enable-preview -jar target/*.jar
