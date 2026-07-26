@@ -1,7 +1,6 @@
 package com.novibe.dns.next_dns;
 
 import com.novibe.common.DnsTaskRunner;
-import com.novibe.common.data_sources.HostsBlockListsLoader;
 import com.novibe.common.data_sources.HostsOverrideListsLoader;
 import com.novibe.common.util.EnvParser;
 import com.novibe.common.util.Log;
@@ -19,29 +18,31 @@ import static com.novibe.common.config.EnvironmentVariables.REDIRECT;
 
 @Service
 @RequiredArgsConstructor
-public class NextDnsTaskRunner implements DnsTaskRunner {
+public class NextDnsTaskRunner extends DnsTaskRunner {
 
-    private final HostsBlockListsLoader blockListsLoader;
-    private final HostsOverrideListsLoader overrideListsLoader;
     private final NextDnsRewriteService nextDnsRewriteService;
     private final NextDnsDenyService nextDnsDenyService;
 
     @Override
-    public void run() {
-
-        Log.global("NextDNS");
+    public void greetingMessage() {
+        Log.global("Setting up Profile " + dnsProfile.number() + " (NextDNS)");
         Log.common("""
-        Script behaviour: old block/redirect settings are about to be updated via provided block/redirect sources.
-        If no sources provided, then all NextDNS settings will be removed.
-        If provided only one type of sources, related settings will be updated; another type remain untouched.
-        NextDNS API rate limiter reset config: 60 seconds after the last request""");
+                Script behaviour: old BLOCK/REDIRECT settings are about to be updated via provided BLOCK/REDIRECT sources.
+                - if no sources provided, then all NextDNS settings will be removed.
+                - each line is mapped to an IP–domain pair; lines that cannot be parsed are skipped.
+                - if provided only one type of sources, related settings will be updated; another type remain untouched.
+                - if EXCLUDE_REDIRECT domains provided, they will affect both existing and new redirect rules.
+                NextDNS api rate limiter reset config: 60 seconds after the last request""");
+    }
 
+    @Override
+    protected void process() {
         List<String> blockSources = EnvParser.parse(BLOCK);
         if (!blockSources.isEmpty()) {
             Log.step("Obtain block lists from %s sources".formatted(blockSources.size()));
             List<String> blocks = blockListsLoader.fetchWebsites(blockSources);
             Log.step("Prepare denylist");
-            List<String> filteredBlocklist = nextDnsDenyService.dropExistingDenys(blocks);
+            List<String> filteredBlocklist = nextDnsDenyService.omitExistingDenys(blocks);
             Log.common("Prepared %s domains to block".formatted(filteredBlocklist.size()));
             Log.step("Save denylist");
             nextDnsDenyService.saveDenyList(filteredBlocklist);
@@ -52,12 +53,12 @@ public class NextDnsTaskRunner implements DnsTaskRunner {
         List<String> rewriteSources = EnvParser.parse(REDIRECT);
         if (!rewriteSources.isEmpty()) {
 
-            Log.step("Obtain rewrite lists from %s sources".formatted(blockSources.size()));
+            Log.step("Obtain rewrite lists from %s sources".formatted(rewriteSources.size()));
             List<HostsOverrideListsLoader.BypassRoute> overrides = overrideListsLoader.fetchWebsites(rewriteSources);
 
             Log.step("Prepare rewrites");
             Map<String, CreateRewriteDto> requests = nextDnsRewriteService.buildNewRewrites(overrides);
-            List<CreateRewriteDto> createRewriteDtos = nextDnsRewriteService.cleanupOutdated(requests);
+            List<CreateRewriteDto> createRewriteDtos = nextDnsRewriteService.cleanupOutdatedAndExcluded(requests);
 
             Log.step("Save rewrites");
             nextDnsRewriteService.saveRewrites(createRewriteDtos);
@@ -70,8 +71,10 @@ public class NextDnsTaskRunner implements DnsTaskRunner {
             nextDnsDenyService.removeAll();
             nextDnsRewriteService.removeAll();
         }
-
-        Log.global("FINISHED");
     }
 
+    @Override
+    protected void finishMessage() {
+        Log.global("Profile " + dnsProfile.number() + " (NextDNS) set up successfully");
+    }
 }

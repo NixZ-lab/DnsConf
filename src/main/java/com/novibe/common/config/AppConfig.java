@@ -1,6 +1,7 @@
 package com.novibe.common.config;
 
 import com.google.gson.Gson;
+import com.novibe.common.util.Jsonable;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -12,7 +13,7 @@ public class AppConfig {
 
     @Bean
     Gson gson() {
-        return new Gson();
+        return Jsonable.mapper;
     }
 
     @Bean

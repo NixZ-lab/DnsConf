@@ -1,10 +1,10 @@
 package com.novibe.common;
 
 import com.google.gson.Gson;
-import com.novibe.common.base_dto.Jsonable;
+import com.novibe.common.base_structures.DnsProfile;
+import com.novibe.common.util.Jsonable;
 import com.novibe.common.exception.DnsHttpError;
 import com.novibe.common.util.Log;
-import lombok.AccessLevel;
 import lombok.Setter;
 import lombok.SneakyThrows;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +17,7 @@ import java.util.concurrent.Semaphore;
 
 import static java.util.Objects.isNull;
 
+@Setter(onMethod_ = @Autowired)
 public abstract class HttpRequestSender {
 
     private final Semaphore semaphore = new Semaphore(100);
@@ -32,14 +33,12 @@ public abstract class HttpRequestSender {
     protected abstract String authHeaderValue();
 
     protected abstract void react401();
-
     protected abstract void react403();
+    protected abstract void react404(DnsHttpError dnsHttpError);
 
-    @Setter(onMethod_ = @Autowired, value = AccessLevel.PACKAGE)
-    private HttpClient httpClient;
-
-    @Setter(onMethod_ = @Autowired, value = AccessLevel.PACKAGE)
-    private Gson jsonMapper;
+    protected HttpClient httpClient;
+    protected Gson jsonMapper;
+    protected DnsProfile dnsProfile;
 
     public <T> T get(String path, Class<T> responseType) {
         return sendRequest(GET, path, null, responseType);
@@ -74,15 +73,11 @@ public abstract class HttpRequestSender {
         if (response.statusCode() > 299) {
             DnsHttpError httpError = new DnsHttpError(response, body);
             Log.fail(httpError.getMessage());
-            if (response.statusCode() == 401) {
-                react401();
-                System.exit(1);
-            }
-            if (response.statusCode() == 403) {
-                react403();
-                System.exit(1);
-            } else {
-                throw httpError;
+            switch (response.statusCode()) {
+                case 401 -> react401();
+                case 403 -> react403();
+                case 404 -> react404(httpError);
+                default -> throw httpError;
             }
         }
         if (response.body().isEmpty()) {

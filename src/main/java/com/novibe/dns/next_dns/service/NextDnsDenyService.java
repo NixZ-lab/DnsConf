@@ -18,7 +18,7 @@ public class NextDnsDenyService {
 
     private final NextDnsDenyClient nextDnsDenyClient;
 
-    public List<String> dropExistingDenys(List<String> newDenyList) {
+    public List<String> omitExistingDenys(List<String> newDenyList) {
         Log.io("Fetching existing denylist from NextDNS");
         List<DenyDto> existingDenyList = nextDnsDenyClient.fetchDenylist();
         Set<String> existingDomainsSet = existingDenyList.stream()

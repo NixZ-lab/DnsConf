@@ -1,6 +1,6 @@
 package com.novibe.common.config;
 
-import com.novibe.common.util.Log;
+import com.novibe.common.exception.UserInputException;
 
 import static java.util.Objects.isNull;
 
@@ -16,11 +16,12 @@ public class EnvironmentVariables {
 
     public static final String REDIRECT = System.getenv("REDIRECT");
 
+    public static final String EXCLUDE_REDIRECT = System.getenv("EXCLUDE_REDIRECT");
+
     private static String extractMandatoryVariable(String key) {
         String env = System.getenv(key);
         if (isNull(env) || env.isBlank()) {
-            Log.fail("Не обнаружена обязательная переменная среды: " + key);
-            System.exit(1);
+            throw UserInputException.noStackTrace("Mandatory environment variable is not provided: " + key);
         }
         return env;
     }

@@ -1,5 +1,6 @@
 package com.novibe.common.data_sources;
 
+import com.novibe.common.base_structures.HostsLine;
 import org.springframework.stereotype.Service;
 
 import java.util.function.Predicate;
@@ -16,16 +17,14 @@ public class HostsOverrideListsLoader extends ListLoader<HostsOverrideListsLoade
     }
 
     @Override
-    protected Predicate<String> filterRelatedLines() {
-        return line -> !HostsBlockListsLoader.isBlock(line);
+    protected Predicate<HostsLine> filterRelatedLines() {
+        return line -> line.hasIpAndDomain() && !HostsBlockListsLoader.isBlockIp(line.ip());
+
     }
 
     @Override
-    protected BypassRoute toObject(String line) {
-        int delimiter = line.indexOf(" ");
-        String ip = line.substring(0, delimiter++);
-        String website = removeWWW(line.substring(delimiter).strip());
-        return new BypassRoute(ip, website);
+    protected BypassRoute toObject(HostsLine line) {
+        return new BypassRoute(line.ip(), line.domain());
     }
 
 }

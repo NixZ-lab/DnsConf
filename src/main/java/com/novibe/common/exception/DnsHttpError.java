@@ -1,6 +1,6 @@
 package com.novibe.common.exception;
 
-import com.novibe.common.base_dto.Jsonable;
+import com.novibe.common.util.Jsonable;
 import lombok.Getter;
 
 import java.net.http.HttpResponse;
@@ -27,7 +27,7 @@ public class DnsHttpError extends RuntimeException {
     }
 
     private static String messageBuilder(String requestMethod, String requestUrl, String requestPayload,
-                                  int statusCode, String responsePayload) {
+                                         int statusCode, String responsePayload) {
         return "Failed request on %s %s with payload:\n%s\nCode: %s, reason:\n%s".formatted(
                 requestMethod, requestUrl, requestPayload,
                 statusCode, responsePayload);

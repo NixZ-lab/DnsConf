@@ -1,5 +1,7 @@
 package com.novibe.common.data_sources;
 
+import com.novibe.common.base_structures.HostsLine;
+import com.novibe.common.util.DataParser;
 import com.novibe.common.util.Log;
 import lombok.Cleanup;
 import lombok.Setter;
@@ -13,9 +15,9 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.function.Predicate;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Setter(onMethod_ = @Autowired)
@@ -23,11 +25,11 @@ public abstract class ListLoader<T> {
 
     private HttpClient client;
 
-    protected abstract T toObject(String line);
+    protected abstract T toObject(HostsLine hostsLine);
 
     protected abstract String listType();
 
-    protected abstract Predicate<String> filterRelatedLines();
+    protected abstract Predicate<HostsLine> filterRelatedLines();
 
     @SneakyThrows
     @SuppressWarnings("preview")
@@ -40,12 +42,14 @@ public abstract class ListLoader<T> {
         scope.join();
         return requests.stream()
                 .map(StructuredTaskScope.Subtask::get)
-                .map(String::stripIndent)
-                .flatMap(s -> Pattern.compile("\\r?\\n").splitAsStream(s))
+                .flatMap(DataParser::splitByEol)
+                .map(String::strip)
                 .parallel()
                 .filter(line -> !line.isBlank())
-                .filter(line -> !line.startsWith("#"))
+                .filter(line -> !DataParser.isComment(line))
                 .map(String::toLowerCase)
+                .map(DataParser::parseHostsLine)
+                .filter(Objects::nonNull)
                 .filter(filterRelatedLines())
                 .distinct()
                 .map(this::toObject)
@@ -59,13 +63,6 @@ public abstract class ListLoader<T> {
                 .GET()
                 .build();
         return client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)).body();
-    }
-
-    protected String removeWWW(String domain) {
-        if (domain.startsWith("www.")) {
-            return domain.substring("www.".length());
-        }
-        return domain;
     }
 
 }

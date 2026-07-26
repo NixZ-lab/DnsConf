@@ -21,6 +21,7 @@ public class Log {
     public static void common(String msg) {
         IO.println(msg);
     }
+
     public static void progress(String msg) {
         IO.print(msg + "\r");
     }

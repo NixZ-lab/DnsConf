@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class CloudflareRuleClient {
 
-    private static final String path ="/rules";
+    private static final String path = "/rules";
 
     private final RequestCloudflare requestCloudflare;
 
