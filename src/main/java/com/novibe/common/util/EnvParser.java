@@ -2,6 +2,7 @@ package com.novibe.common.util;
 
 import com.novibe.common.base_structures.DnsProfile;
 import com.novibe.common.config.EnvironmentVariables;
+import com.novibe.common.exception.UserInputException;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -24,9 +25,8 @@ public class EnvParser {
         List<String> secretList = parse(EnvironmentVariables.AUTH_SECRET);
 
         if (clientIdList.size() != secretList.size()) {
-            Log.fail("CLIENT_ID values amount and AUTH_SECRET values amount must be equal, but were %s and %s"
+            throw UserInputException.noStackTrace("CLIENT_ID values amount and AUTH_SECRET values amount must be equal, but were %s and %s"
                     .formatted(clientIdList.size(), secretList.size()));
-            System.exit(1);
         }
         int profilesAmount = clientIdList.size();
 
@@ -35,8 +35,7 @@ public class EnvParser {
             Arrays.fill(dnsFiller, dnsList.getFirst());
             dnsList = Arrays.asList(dnsFiller);
         } else if (dnsList.size() != profilesAmount) {
-            Log.fail("DNS values amount must be equal to CLIENT_ID values amount or contain exactly one provider");
-            System.exit(1);
+            throw UserInputException.noStackTrace("DNS values amount must be equal to CLIENT_ID values amount or contain exactly one provider");
         }
         ArrayList<DnsProfile> dnsProfiles = new ArrayList<>();
         for (int i = 0; i < profilesAmount; i++) {

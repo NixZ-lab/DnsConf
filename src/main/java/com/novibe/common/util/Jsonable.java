@@ -1,11 +1,10 @@
-package com.novibe.common.base_structures;
+package com.novibe.common.util;
 
 import com.google.gson.Gson;
-import com.novibe.App;
 
 public interface Jsonable {
 
-    Gson mapper = App.commonContext.getBean(Gson.class);
+    Gson mapper = new Gson();
 
     default String toJson() {
         return mapper.toJson(this);

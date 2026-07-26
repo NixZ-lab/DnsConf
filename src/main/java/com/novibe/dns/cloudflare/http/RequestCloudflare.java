@@ -1,8 +1,8 @@
 package com.novibe.dns.cloudflare.http;
 
 import com.novibe.common.HttpRequestSender;
+import com.novibe.common.exception.CredentialsException;
 import com.novibe.common.exception.DnsHttpError;
-import com.novibe.common.exception.ProcessException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -27,12 +27,12 @@ public class RequestCloudflare extends HttpRequestSender {
 
     @Override
     protected final void react401() {
-        throw new ProcessException("Invalid API Token!");
+        throw new CredentialsException("Invalid API Token!");
     }
 
     @Override
     protected void react403() {
-        throw new ProcessException("""
+        throw new CredentialsException("""
                 Token doesn't have necessary permissions!
                 Generate a token with permissions:
                 1) Zero Trust:Edit

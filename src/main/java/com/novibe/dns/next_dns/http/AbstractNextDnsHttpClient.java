@@ -1,8 +1,8 @@
 package com.novibe.dns.next_dns.http;
 
 import com.novibe.common.HttpRequestSender;
+import com.novibe.common.exception.CredentialsException;
 import com.novibe.common.exception.DnsHttpError;
-import com.novibe.common.exception.ProcessException;
 import com.novibe.common.util.Log;
 
 public abstract class AbstractNextDnsHttpClient extends HttpRequestSender {
@@ -26,18 +26,18 @@ public abstract class AbstractNextDnsHttpClient extends HttpRequestSender {
 
     @Override
     protected final void react401() {
-        throw new ProcessException("Invalid api key");
+        throw new CredentialsException("Invalid api key");
     }
 
     @Override
     protected void react403() {
-        throw new ProcessException("Invalid api key!");
+        throw new CredentialsException("Invalid api key!");
     }
 
     @Override
     protected void react404(DnsHttpError dnsHttpError) {
         if (dnsProfile.clientId() != null) {
-            Log.fail("Make sure that the values of AUTH_SECRET and CLIENT_ID belongs to same account!");
+            Log.fail("Make sure that values of AUTH_SECRET and CLIENT_ID belongs to same account! Providing a new API Token to AUTH_SECRET may help.");
         }
         throw dnsHttpError;
     }

@@ -1,6 +1,6 @@
 package com.novibe.dns.cloudflare.http.dto.request;
 
-import com.novibe.common.base_structures.Jsonable;
+import com.novibe.common.util.Jsonable;
 import com.novibe.dns.cloudflare.http.dto.Item;
 import lombok.Builder;
 

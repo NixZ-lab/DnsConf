@@ -1,6 +1,6 @@
 package com.novibe.common.exception;
 
-import com.novibe.common.base_structures.Jsonable;
+import com.novibe.common.util.Jsonable;
 import lombok.Getter;
 
 import java.net.http.HttpResponse;

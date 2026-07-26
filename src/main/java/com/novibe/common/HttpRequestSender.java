@@ -2,7 +2,7 @@ package com.novibe.common;
 
 import com.google.gson.Gson;
 import com.novibe.common.base_structures.DnsProfile;
-import com.novibe.common.base_structures.Jsonable;
+import com.novibe.common.util.Jsonable;
 import com.novibe.common.exception.DnsHttpError;
 import com.novibe.common.util.Log;
 import lombok.Setter;
@@ -17,6 +17,7 @@ import java.util.concurrent.Semaphore;
 
 import static java.util.Objects.isNull;
 
+@Setter(onMethod_ = @Autowired)
 public abstract class HttpRequestSender {
 
     private final Semaphore semaphore = new Semaphore(100);
@@ -35,13 +36,8 @@ public abstract class HttpRequestSender {
     protected abstract void react403();
     protected abstract void react404(DnsHttpError dnsHttpError);
 
-    @Setter(onMethod_ = @Autowired)
     protected HttpClient httpClient;
-
-    @Setter(onMethod_ = @Autowired)
     protected Gson jsonMapper;
-
-    @Setter(onMethod_ = @Autowired)
     protected DnsProfile dnsProfile;
 
     public <T> T get(String path, Class<T> responseType) {

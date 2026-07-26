@@ -18,7 +18,7 @@ public class HostsBlockListsLoader extends ListLoader<String> {
 
     @Override
     protected Predicate<HostsLine> filterRelatedLines() {
-        return line -> isBlockIp(line.ip()) && !isLocalhost(line.domain());
+        return line -> isBlockIp(line.ip()) && !isLocalhost(line.domain()) || line.hasDomainOnly();
     }
 
     @Override

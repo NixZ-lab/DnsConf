@@ -1,6 +1,6 @@
 package com.novibe.common.config;
 
-import com.novibe.common.util.Log;
+import com.novibe.common.exception.UserInputException;
 
 import static java.util.Objects.isNull;
 
@@ -21,8 +21,7 @@ public class EnvironmentVariables {
     private static String extractMandatoryVariable(String key) {
         String env = System.getenv(key);
         if (isNull(env) || env.isBlank()) {
-            Log.fail("Mandatory environment variable is not provided: " + key);
-            System.exit(1);
+            throw UserInputException.noStackTrace("Mandatory environment variable is not provided: " + key);
         }
         return env;
     }
