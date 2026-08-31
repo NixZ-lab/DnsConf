@@ -35,6 +35,7 @@ Sign in with GitHub and provide **CLIENT_ID** and **AUTH_SECRET**. See [Setup cr
 - [Setup profile](#setup-profile)
 - [Setup data sources](#setup-data-sources)
 - [Setup excluded redirects (optional)](#setup-excluded-redirects-optional)
+- [Set up a DNS donor](#set-up-a-dns-donor)
 - [Set up multiple profiles](#set-up-multiple-profiles)
 - [GitHub Actions](#github-actions-setup)
 
@@ -132,6 +133,27 @@ These domains and their subdomains:
 
 ---
 
+## Set up a DNS donor
+
+If the IP addresses supplied by a hosts source become outdated, the configurator can resolve fresh addresses through a donor DNS server before applying redirect rules.
+
+Set the optional `DONOR_DNS` environment variable to either:
+
+- an **IPv4 DNS server**, for example `111.88.96.50`;
+- a **DNS-over-HTTPS endpoint**, for example `https://xbox-dns.ru/dns-query`.
+
+For example, if a hosts file contains:
+
+    1.2.3.4 domain-1.to.redirect
+    1.2.3.4 domain-2.to.redirect
+    1.2.3.4 domain-3.to.redirect
+
+`DONOR_DNS` can resolve fresh IP addresses for those domains, and the updated addresses are then used when redirect rules are uploaded.
+
+Leave `DONOR_DNS` empty if you do not want to use this feature.
+
+---
+
 ## Set up multiple profiles
 
 ### Restrictions
@@ -152,6 +174,14 @@ Also list the provider for each profile in the `DNS` environment variable. For e
 - `DNS`: `NEXTDNS,CLOUDFLARE,NEXTDNS`
 - `AUTH_SECRET`: `secret_NextDns_1,secret_Cloudflare_1,secret_NextDns_2`
 - `CLIENT_ID`: `client_id_NextDns_1,client_id_Cloudflare_1,client_id_NextDns_2`
+
+### Different DONOR_DNS values per profile
+
+If `DONOR_DNS` contains one value, that donor is used for all profiles.
+
+You can also provide one value per profile, separated by commas without spaces. Use `-` for profiles where donor DNS should be disabled. For example:
+
+`-,111.88.96.50,-,111.88.96.50`
 
 ---
 
@@ -198,7 +228,7 @@ Previously generated data is removed only when both `BLOCK` and `REDIRECT` sourc
 2. Open _Settings_ → _Environments_.
 3. Create a new environment named `DNS`.
 4. Add `AUTH_SECRET` and `CLIENT_ID` to **Environment secrets**.
-5. Add `DNS`, `REDIRECT`, `BLOCK`, and `EXCLUDE_REDIRECT` to **Environment variables**.
+5. Add `DNS`, `REDIRECT`, `BLOCK`, `EXCLUDE_REDIRECT`, and optionally `DONOR_DNS` to **Environment variables**.
 
 The action runs daily at **01:30 UTC**. To change the schedule, edit the cron expression in `.github/workflows/github_action.yml`.
 

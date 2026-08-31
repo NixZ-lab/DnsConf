@@ -35,6 +35,7 @@
 - [Настройка профиля](#настройка-профиля)
 - [Настройка источников данных](#настройка-источников-данных)
 - [Настройка исключений редиректов](#настройка-исключений-редиректов-опционально)
+- [Настройка DNS-донора](#настройка-dns-донора)
 - [Настройка нескольких профилей](#настройка-нескольких-профилей)
 - [GitHub Actions](#настройка-github-actions)
 
@@ -132,6 +133,27 @@ https://raw.githubusercontent.com/Internet-Helper/GeoHideDNS/refs/heads/main/hos
 
 ---
 
+## Настройка DNS-донора
+
+Если IP-адреса из hosts-источника устарели, конфигуратор может получить актуальные адреса через DNS-донора перед применением правил перенаправления.
+
+Задайте необязательную переменную окружения `DONOR_DNS` в одном из форматов:
+
+- **IPv4-адрес DNS-сервера**, например `111.88.96.50`;
+- **DNS-over-HTTPS endpoint**, например `https://xbox-dns.ru/dns-query`.
+
+Например, если hosts-файл содержит:
+
+    1.2.3.4 domain-1.to.redirect
+    1.2.3.4 domain-2.to.redirect
+    1.2.3.4 domain-3.to.redirect
+
+`DONOR_DNS` может получить для этих доменов актуальные IP-адреса. Обновленные адреса будут использованы при загрузке правил перенаправления.
+
+Если функция не нужна, оставьте `DONOR_DNS` пустой.
+
+---
+
 ## Настройка нескольких профилей
 
 ### Ограничения
@@ -152,6 +174,14 @@ https://raw.githubusercontent.com/Internet-Helper/GeoHideDNS/refs/heads/main/hos
 - `DNS`: `NEXTDNS,CLOUDFLARE,NEXTDNS`
 - `AUTH_SECRET`: `секрет_NextDns_1,секрет_Cloudflare_1,секрет_NextDns_2`
 - `CLIENT_ID`: `идентификатор_NextDns_1,идентификатор_Cloudflare_1,идентификатор_NextDns_2`
+
+### Разные значения DONOR_DNS для профилей
+
+Если `DONOR_DNS` содержит одно значение, оно применяется ко всем профилям.
+
+Также можно указать отдельное значение для каждого профиля через запятую без пробелов. Для профилей, где DNS-донор не нужен, используйте `-`. Например:
+
+`-,111.88.96.50,-,111.88.96.50`
 
 ---
 
@@ -198,7 +228,7 @@ https://raw.githubusercontent.com/Internet-Helper/GeoHideDNS/refs/heads/main/hos
 2. Откройте _Settings_ → _Environments_.
 3. Создайте окружение с именем `DNS`.
 4. Добавьте `AUTH_SECRET` и `CLIENT_ID` в **Environment secrets**.
-5. Добавьте `DNS`, `REDIRECT`, `BLOCK` и `EXCLUDE_REDIRECT` в **Environment variables**.
+5. Добавьте `DNS`, `REDIRECT`, `BLOCK`, `EXCLUDE_REDIRECT` и при необходимости `DONOR_DNS` в **Environment variables**.
 
 Action запускается ежедневно в **01:30 UTC**. Чтобы изменить время, отредактируйте cron-выражение в `.github/workflows/github_action.yml`.
 
