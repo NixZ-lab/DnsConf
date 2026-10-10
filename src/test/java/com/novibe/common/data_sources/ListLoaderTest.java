@@ -63,6 +63,26 @@ class ListLoaderTest {
         assertThrows(Exception.class, () -> loader.fetchWebsites(urls));
     }
 
+    @Test
+    void rejectsEmptyHtmlAndPartlyMalformedSources() {
+        for (String body : List.of("", "# comments only", "<html>error</html>",
+                "1.2.3.4 valid.com\ntruncated", "0.0.0.0 blocked.com")) {
+            assertThrows(IllegalArgumentException.class, () -> loader.parseSource(body));
+        }
+    }
+
+    @Test
+    void oneEmptySourceCannotSilentlyDropItsDomains() {
+        addRoute("/empty", 200, "# nothing here");
+        assertThrows(Exception.class, () -> loader.fetchWebsites(List.of(baseUrl + "/hosts", baseUrl + "/empty")));
+    }
+
+    @Test
+    void preservesWwwWildcardIpv6AliasesCommentsAndOrder() {
+        var routes = loader.parseSource("2001:db8::1 www.example.com *.example.com # comment\n1.2.3.4 OTHER.COM.\n");
+        assertEquals(List.of("www.example.com", "*.example.com", "other.com"), routes.stream().map(BypassRoute::website).toList());
+    }
+
     private String messageOfFailure(String url) {
         Exception exception = assertThrows(Exception.class, () -> loader.fetchWebsites(List.of(url)));
         for (Throwable cause = exception; cause != null; cause = cause.getCause()) {

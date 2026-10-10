@@ -2,14 +2,54 @@ name: DNS Block&Redirect Configurer cron task
 
 on:
   schedule:
-    - cron: '30 1 * * *' # 04:30 MSK (01:30 UTC)
+    - cron: '30 1 * * *' # Preserve 04:30 MSK; schedules only preview.
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Preview or apply a previously reviewed plan
+        type: choice
+        options: [dry-run, adopt, apply]
+        default: dry-run
+      environment:
+        description: DNS environment (apply requires one environment)
+        type: choice
+        options: [ALL, DNS, DNS_WIFE, DNS_DIRECTOR, DNS_PV]
+        default: ALL
+      review_run_id:
+        description: Successful preview run ID at this exact commit (required for apply)
+        type: string
+      adopt_ids:
+        description: Exact comma-separated legacy rewrite IDs reviewed in the preview (adopt mode only)
+        type: string
+      max_delete:
+        description: Maximum reviewed deletions (default forbids deletion)
+        type: string
+        default: '0'
+      initialize:
+        description: First apply without ownership journal; existing rules remain unmanaged
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+# Serialize across branches and environments; never cancel an in-progress mutation.
+concurrency:
+  group: nextdns-sync
+  cancel-in-progress: false
 
 jobs:
-  build-my-dns:
-    name: Update My DNS
+  sync:
+    name: ${{ matrix.environment }} / ${{ inputs.mode || 'dry-run' }}
     runs-on: ubuntu-latest
-    environment: DNS
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        environment: ${{ fromJSON((github.event_name == 'schedule' || inputs.environment == 'ALL') && '["DNS","DNS_WIFE","DNS_DIRECTOR","DNS_PV"]' || format('["{0}"]', inputs.environment)) }}
+    environment: ${{ matrix.environment }}
     env:
       DNS: ${{ vars.DNS }}
       BLOCK: ${{ vars.BLOCK }}
@@ -18,118 +58,67 @@ jobs:
       DONOR_DNS: ${{ vars.DONOR_DNS }}
       CLIENT_ID: ${{ secrets.CLIENT_ID }}
       AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+      SYNC_DIR: nextdns-sync
+      DRY_RUN: ${{ (inputs.mode == 'apply' || inputs.mode == 'adopt') && 'false' || 'true' }}
+      SYNC_MODE: ${{ inputs.mode || 'dry-run' }}
+      ADOPT_IDS: ${{ inputs.mode == 'adopt' && inputs.adopt_ids || '' }}
+      MAX_DELETE: ${{ inputs.max_delete || '0' }}
+      INITIALIZE: ${{ inputs.initialize && 'true' || 'false' }}
+      REVIEW_RUN_ID: ${{ inputs.review_run_id }}
+      SELECTED_ENVIRONMENT: ${{ inputs.environment }}
+      GH_TOKEN: ${{ github.token }}
       TZ: Europe/Moscow
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Set up JDK 26
-        uses: actions/setup-java@v5
+      - uses: actions/checkout@v5
+      - name: Validate execution scope
+        run: |
+          python3 - <<'PY'
+          import os
+          assert os.environ['DNS'].strip().upper() == 'NEXTDNS', 'This workflow only supports NextDNS'
+          assert len(os.environ['CLIENT_ID']) == 6 and all(c in '0123456789abcdef' for c in os.environ['CLIENT_ID']), 'One NextDNS profile per environment required'
+          assert os.environ['MAX_DELETE'].isdigit(), 'max_delete must be a non-negative integer'
+          if os.environ['DRY_RUN'] == 'false':
+              assert os.environ['GITHUB_REF'] == 'refs/heads/main', 'Apply is restricted to main'
+              assert os.environ['SELECTED_ENVIRONMENT'] != 'ALL', 'Review and apply one environment at a time'
+              assert os.environ['REVIEW_RUN_ID'].isdigit(), 'A reviewed preview run ID is required'
+          if os.environ['SYNC_MODE'] == 'adopt':
+              assert os.environ['ADOPT_IDS'].strip(), 'Explicitly reviewed IDs are required for adoption'
+          PY
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '26'
           cache: maven
-
-      - name: Build with Maven
+      - name: Build and test
         run: mvn -B clean package
-
-      - name: Run application
-        run: |
-          echo "Starting application..."
-          java --enable-preview -jar target/*.jar
-
-  build-wife-dns:
-    name: Update Wife DNS
-    runs-on: ubuntu-latest
-    environment: DNS_WIFE
-    env:
-      DNS: ${{ vars.DNS }}
-      BLOCK: ${{ vars.BLOCK }}
-      REDIRECT: ${{ vars.REDIRECT }}
-      EXCLUDE_REDIRECT: ${{ vars.EXCLUDE_REDIRECT }}
-      DONOR_DNS: ${{ vars.DONOR_DNS }}
-      CLIENT_ID: ${{ secrets.CLIENT_ID }}
-      AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
-      TZ: Europe/Moscow
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Set up JDK 26
-        uses: actions/setup-java@v5
+      - name: Load reviewed preview
+        if: inputs.mode == 'apply' || inputs.mode == 'adopt'
+        run: python3 scripts/sync_artifacts.py plan '${{ matrix.environment }}' --run-id "$REVIEW_RUN_ID"
+      - name: Restore latest ownership state
+        run: python3 scripts/sync_artifacts.py state '${{ matrix.environment }}'
+      - name: Prepare preview and backup (read only)
+        if: inputs.mode != 'apply' && inputs.mode != 'adopt'
+        run: java --enable-preview -jar target/dns-block-and-redirect-configurer-1.0-SNAPSHOT.jar
+      - name: Encrypt preview and backup
+        run: python3 scripts/sync_artifacts.py seal-preview '${{ matrix.environment }}'
+      - name: Preserve reviewed plan and backup before any mutations
+        uses: actions/upload-artifact@v4
         with:
-          distribution: temurin
-          java-version: '26'
-          cache: maven
-
-      - name: Build with Maven
-        run: mvn -B clean package
-
-      - name: Run application
-        run: |
-          echo "Starting application..."
-          java --enable-preview -jar target/*.jar
-
-  build-director-dns:
-    name: Update Director DNS
-    runs-on: ubuntu-latest
-    environment: DNS_DIRECTOR
-    env:
-      DNS: ${{ vars.DNS }}
-      BLOCK: ${{ vars.BLOCK }}
-      REDIRECT: ${{ vars.REDIRECT }}
-      EXCLUDE_REDIRECT: ${{ vars.EXCLUDE_REDIRECT }}
-      DONOR_DNS: ${{ vars.DONOR_DNS }}
-      CLIENT_ID: ${{ secrets.CLIENT_ID }}
-      AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
-      TZ: Europe/Moscow
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Set up JDK 26
-        uses: actions/setup-java@v5
+          name: nextdns-preview-${{ matrix.environment }}
+          path: sealed/preview.bin
+          if-no-files-found: error
+          retention-days: 90
+      - name: Apply reviewed plan or adopt reviewed IDs
+        if: inputs.mode == 'apply' || inputs.mode == 'adopt'
+        run: java --enable-preview -jar target/dns-block-and-redirect-configurer-1.0-SNAPSHOT.jar
+      - name: Encrypt journal even after partial failure
+        if: always() && (inputs.mode == 'apply' || inputs.mode == 'adopt')
+        run: python3 scripts/sync_artifacts.py seal-state '${{ matrix.environment }}'
+      - name: Preserve journal even after partial failure
+        if: always() && (inputs.mode == 'apply' || inputs.mode == 'adopt')
+        uses: actions/upload-artifact@v4
         with:
-          distribution: temurin
-          java-version: '26'
-          cache: maven
-
-      - name: Build with Maven
-        run: mvn -B clean package
-
-      - name: Run application
-        run: |
-          echo "Starting application..."
-          java --enable-preview -jar target/*.jar
-
-  build-pv-dns:
-    name: Update PV DNS
-    runs-on: ubuntu-latest
-    environment: DNS_PV
-    env:
-      DNS: ${{ vars.DNS }}
-      BLOCK: ${{ vars.BLOCK }}
-      REDIRECT: ${{ vars.REDIRECT }}
-      EXCLUDE_REDIRECT: ${{ vars.EXCLUDE_REDIRECT }}
-      DONOR_DNS: ${{ vars.DONOR_DNS }}
-      CLIENT_ID: ${{ secrets.CLIENT_ID }}
-      AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
-      TZ: Europe/Moscow
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Set up JDK 26
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '26'
-          cache: maven
-
-      - name: Build with Maven
-        run: mvn -B clean package
-
-      - name: Run application
-        run: |
-          echo "Starting application..."
-          java --enable-preview -jar target/*.jar
+          name: nextdns-state-${{ matrix.environment }}
+          path: sealed/state.bin
+          if-no-files-found: warn
+          retention-days: 90

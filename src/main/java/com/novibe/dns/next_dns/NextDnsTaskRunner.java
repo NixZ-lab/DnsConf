@@ -5,83 +5,54 @@ import com.novibe.common.base_structures.BypassRoute;
 import com.novibe.common.util.DonorDnsUtils;
 import com.novibe.common.util.EnvParser;
 import com.novibe.common.util.Log;
-import com.novibe.dns.next_dns.http.dto.request.CreateRewriteDto;
 import com.novibe.dns.next_dns.service.NextDnsDenyService;
 import com.novibe.dns.next_dns.service.NextDnsRewriteService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-
+import java.nio.file.Path;
 import java.util.List;
-import java.util.Map;
-
-import static com.novibe.common.config.EnvironmentVariables.BLOCK;
-import static com.novibe.common.config.EnvironmentVariables.REDIRECT;
-import static java.util.Objects.nonNull;
+import static com.novibe.common.config.EnvironmentVariables.*;
 
 @Service
 @RequiredArgsConstructor
 public class NextDnsTaskRunner extends DnsTaskRunner {
+    private final NextDnsRewriteService rewrites;
+    private final NextDnsDenyService denys;
 
-    private final NextDnsRewriteService nextDnsRewriteService;
-    private final NextDnsDenyService nextDnsDenyService;
-
-    @Override
-    public void greetingMessage() {
-        Log.global("Setting up Profile " + dnsProfile.number() + " (NextDNS)");
-        Log.common("""
-                Script behaviour: old BLOCK/REDIRECT settings are about to be updated via provided BLOCK/REDIRECT sources.
-                - if no sources provided, then all NextDNS settings will be removed.
-                - each line is mapped to an IP–domain pair; lines that cannot be parsed are skipped.
-                - if provided only one type of sources, related settings will be updated; another type remain untouched.
-                - if EXCLUDE_REDIRECT domains provided, they will affect both existing and new redirect rules.
-                NextDNS api rate limiter reset config: 60 seconds after the last request""");
+    @Override public void greetingMessage() {
+        Log.global("NextDNS safe synchronization: preview by default; empty inputs never clear settings");
     }
-
-    @Override
-    protected void process() {
+    @Override protected void process() {
+        boolean dryRun = booleanSetting("DRY_RUN", true);
+        Path dir = Path.of(System.getenv().getOrDefault("SYNC_DIR", "nextdns-sync"), dnsProfile.clientId());
+        if (!dryRun) {
+            // Apply exactly the saved target, without downloading a potentially changed hosts file.
+            List<String> adoptIds = EnvParser.parse(System.getenv("ADOPT_IDS"));
+            if (!adoptIds.isEmpty()) rewrites.adopt(dnsProfile.clientId(), dir, adoptIds);
+            else rewrites.apply(dnsProfile.clientId(), dir,
+                    Integer.parseInt(System.getenv().getOrDefault("MAX_DELETE", "0")));
+            return;
+        }
+        try { java.nio.file.Files.deleteIfExists(dir.resolve("plan.json")); }
+        catch (java.io.IOException e) { throw new IllegalStateException("Cannot invalidate old plan", e); }
+        List<String> sources = EnvParser.parse(REDIRECT);
+        if (sources.isEmpty()) throw new IllegalStateException("REDIRECT is empty; no profile changes made");
+        // Fetch ALL inputs before producing a usable plan. Block writes are deliberately separate.
         List<String> blockSources = EnvParser.parse(BLOCK);
         if (!blockSources.isEmpty()) {
-            Log.step("Obtain block lists from %s sources".formatted(blockSources.size()));
             List<String> blocks = blockListsLoader.fetchWebsites(blockSources);
-            Log.step("Prepare denylist");
-            List<String> filteredBlocklist = nextDnsDenyService.omitExistingDenys(blocks);
-            Log.common("Prepared %s domains to block".formatted(filteredBlocklist.size()));
-            Log.step("Save denylist");
-            nextDnsDenyService.saveDenyList(filteredBlocklist);
-        } else {
-            Log.fail("No block sources provided");
+            Log.common("BLOCK preview only: %s potential additions; denylist will not be changed by rewrite apply"
+                    .formatted(denys.omitExistingDenys(blocks).size()));
         }
-
-        List<String> rewriteSources = EnvParser.parse(REDIRECT);
-        if (!rewriteSources.isEmpty()) {
-
-            Log.step("Obtain rewrite lists from %s sources".formatted(rewriteSources.size()));
-            List<BypassRoute> overrides = overrideListsLoader.fetchWebsites(rewriteSources);
-
-            if (nonNull(dnsProfile.donorDns())) {
-                Log.step("Replace IP of domains via IPs from " + dnsProfile.donorDns());
-                DonorDnsUtils.replaceIPs(overrides, dnsProfile);
-            }
-
-            Log.step("Prepare rewrites");
-            Map<String, CreateRewriteDto> requests = nextDnsRewriteService.buildNewRewrites(overrides);
-            List<CreateRewriteDto> createRewriteDtos = nextDnsRewriteService.cleanupOutdatedAndExcluded(requests);
-
-            Log.step("Save rewrites");
-            nextDnsRewriteService.saveRewrites(createRewriteDtos);
-        } else {
-            Log.fail("No rewrite sources provided");
-        }
-
-        if (blockSources.isEmpty() && rewriteSources.isEmpty()) {
-            Log.step("Remove settings");
-            nextDnsDenyService.removeAll();
-            nextDnsRewriteService.removeAll();
-        }
+        List<BypassRoute> routes = overrideListsLoader.fetchWebsites(sources);
+        if (dnsProfile.donorDns() != null) DonorDnsUtils.replaceIPs(routes, dnsProfile);
+        rewrites.prepare(dnsProfile.clientId(), routes, dir);
     }
-
-    @Override
-    protected void finishMessage() {
-        Log.global("Profile " + dnsProfile.number() + " (NextDNS) set up successfully");
+    static boolean booleanSetting(String key, boolean fallback) {
+        String value = System.getenv(key);
+        if (value == null || value.isBlank()) return fallback;
+        if (!value.equals("true") && !value.equals("false")) throw new IllegalArgumentException(key + " must be true or false");
+        return Boolean.parseBoolean(value);
     }
+    @Override protected void finishMessage() { Log.global("NextDNS phase completed"); }
 }

@@ -34,3 +34,10 @@ build/
 
 ### Mac OS ###
 .DS_Store
+
+# Sensitive snapshots and ownership journals
+nextdns-sync/
+.tools/
+sealed/
+__pycache__/
+dependency-reduced-pom.xml

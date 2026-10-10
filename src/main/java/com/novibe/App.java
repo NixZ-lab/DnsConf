@@ -32,6 +32,7 @@ public class App {
             } catch (CredentialsException credentialsException) {
                 Log.fail("CredentialsException on profile " + dnsProfile.number());
                 Log.fail(credentialsException.getMessage());
+                throw credentialsException;
             } catch (Exception exception) {
                 Log.fail("Unexpected exception on profile " + dnsProfile.number());
                 throw exception;
