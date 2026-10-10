@@ -38,7 +38,8 @@ public record SyncPolicy(int maxCreate, int maxUpdate, int maxDelete, int maxDel
         for (var r : plan.create()) {
             if (replacementNames.contains(r.name())) continue;
             String n=r.name().toLowerCase(Locale.ROOT);
-            if (!allowNewWww && n.startsWith("www."))
+            String domain=n.startsWith("*.") ? n.substring(2) : n;
+            if (!allowNewWww && domain.startsWith("www."))
                 throw new IllegalStateException("New www route requires explicit approval");
             if (!allowNewOpenai && (n.contains("openai") || n.contains("chatgpt") || n.contains("oaistatic") || n.contains("oaiusercontent")))
                 throw new IllegalStateException("New OpenAI route requires explicit approval");

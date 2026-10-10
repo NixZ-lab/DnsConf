@@ -33,6 +33,14 @@ class SyncGuardTest {
         var old=new RewriteDto("old","www.example.com","1.2.3.4");
         assertDoesNotThrow(()->policy.validate(plan(List.of(old),List.of(old),List.of(new CreateRewriteDto("www.example.com","2.3.4.5")))));
     }
+    @Test void wildcardCannotBypassNewWwwPermissionButOwnedReplacementStillWorks() {
+        var target=new CreateRewriteDto("*.www.example.com","1.2.3.4");
+        var addition=plan(List.of(),List.of(),List.of(target));
+        assertThrows(IllegalStateException.class,()->policy.validate(addition));
+        assertDoesNotThrow(()->new SyncPolicy(20,20,20,5,true,false).validate(addition));
+        var old=new RewriteDto("old","*.www.example.com","2.3.4.5");
+        assertDoesNotThrow(()->policy.validate(plan(List.of(old),List.of(old),List.of(target))));
+    }
     @Test void regularAdditionAndNoOpPassButCreationBudgetFailsClosed() {
         var p=plan(List.of(),List.of(),List.of(new CreateRewriteDto("example.com","1.2.3.4")));
         assertDoesNotThrow(()->policy.validate(p));

@@ -17,7 +17,7 @@ Sync is disabled by default. An environment without `SYNC_ENABLED=true` is repor
 | `SYNC_MAX_UPDATE` | `20` | Owned names with an IP replacement |
 | `SYNC_MAX_DELETE` | `20` | All DELETE requests, including IP replacements |
 | `SYNC_MAX_DELETE_PERCENT` | `5` | Stale removals as a percentage of journal entries; replacements excluded |
-| `SYNC_ALLOW_NEW_WWW` | `false` | Separate authorization for new literal `www.` names |
+| `SYNC_ALLOW_NEW_WWW` | `false` | Separate authorization for new `www.` names, including `*.www.` wildcard routes |
 | `SYNC_ALLOW_NEW_OPENAI` | `false` | Separate authorization for new OpenAI/ChatGPT routes |
 
 A limit violation stops the entire profile before writes. Limits are not silently increased and forbidden additions are not silently filtered. An owned `www`/OpenAI IP replacement counts as an update; a new name requires the corresponding permission. Conservative OpenAI detection covers names containing `openai`, `chatgpt`, `oaistatic` or `oaiusercontent`. If the source proposes new OpenAI names without approval, use reviewed exact exclusions or a separately reviewed plan. Changing flags, exclusions or limits is a distinct rollout decision.
