@@ -17,6 +17,24 @@ def archive(name, content=b"{}"):
 
 
 class ArtifactTests(unittest.TestCase):
+    def test_old_and_new_state_layouts_restore_without_reusing_previous_result(self):
+        for include_report in (False, True):
+            data=io.BytesIO()
+            with zipfile.ZipFile(data,'w') as z:
+                z.writestr('abc123/state.json',json.dumps(dict(version=1,profile='abc123',managed=[])))
+                if include_report:z.writestr('abc123/result.json','{"status":"Failed","added":1}')
+            run=dict(id=20,path=sync.WORKFLOW,event='workflow_dispatch',head_branch='main')
+            item=dict(id=2,expired=False,workflow_run=dict(id=20))
+            with tempfile.TemporaryDirectory() as d, patch.object(sync,'artifacts',return_value=[item]), patch.object(sync,'api',side_effect=[run,b'outer']), patch.object(sync,'unseal_artifact',return_value=data.getvalue()):
+                self.assertTrue(sync.restore('a/b','DNS',d))
+                self.assertEqual([],json.loads(Path(d,'abc123/state.json').read_text())['managed'])
+                self.assertFalse(Path(d,'abc123/result.json').exists())
+
+    def test_new_preview_evidence_is_allowed_without_changing_old_layout(self):
+        with tempfile.TemporaryDirectory() as d:
+            sync.extract(archive('abc123/sources.json'),d,{'plan.json','backup.json','state-before.json','sources.json'})
+            self.assertTrue(Path(d,'abc123/sources.json').is_file())
+
     def test_rejects_path_traversal_wrong_profile_layout_and_unexpected_files(self):
         for name in ("../state.json", "/abc123/state.json", "abc123/../../state.json", "abc123/key.txt", "profile/state.json"):
             with self.subTest(name=name), tempfile.TemporaryDirectory() as d:

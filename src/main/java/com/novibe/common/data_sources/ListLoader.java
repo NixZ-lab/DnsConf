@@ -23,6 +23,10 @@ import java.util.stream.Collectors;
 @Setter(onMethod_ = @Autowired)
 public abstract class ListLoader<T> {
 
+    public record SourceDigest(String url, String sha256) {}
+    private List<SourceDigest> lastSources = List.of();
+    public List<SourceDigest> getLastSources() { return lastSources; }
+
     private HttpClient client;
 
     protected abstract T toObject(HostsLine hostsLine);
@@ -33,6 +37,7 @@ public abstract class ListLoader<T> {
 
     @SuppressWarnings("preview")
     public List<T> fetchWebsites(List<String> urls) {
+        lastSources = List.of();
         try (var scope = StructuredTaskScope.open()) {
             List<StructuredTaskScope.Subtask<String>> requests = new ArrayList<>();
             urls.stream()
@@ -40,11 +45,20 @@ public abstract class ListLoader<T> {
                     .forEach(requests::add);
             scope.join();
 
-            return requests.stream()
-                    .map(StructuredTaskScope.Subtask::get)
+            List<String> bodies = requests.stream().map(StructuredTaskScope.Subtask::get).toList();
+            List<T> result = bodies.stream()
                     .flatMap(body -> parseSource(body).stream())
                     .distinct()
                     .collect(Collectors.toCollection(ArrayList::new));
+            List<SourceDigest> digests = new ArrayList<>();
+            for (int i=0; i<urls.size(); i++) {
+                try {
+                    byte[] hash=java.security.MessageDigest.getInstance("SHA-256").digest(bodies.get(i).getBytes(StandardCharsets.UTF_8));
+                    digests.add(new SourceDigest(urls.get(i), java.util.HexFormat.of().formatHex(hash)));
+                } catch(java.security.NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
+            }
+            lastSources=List.copyOf(digests);
+            return result;
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }

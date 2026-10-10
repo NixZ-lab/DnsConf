@@ -10,7 +10,7 @@ Configure redirect and blocking rules for Cloudflare and NextDNS accounts.
 
 ## Safe NextDNS synchronization in this fork
 
-Read the [migration, dry-run, encrypted backups and recovery guide](docs/nextdns-safe-sync.md) before running NextDNS updates. All four personal environments are preserved. Scheduled runs now preview only; applying or adopting reviewed legacy rules is an explicit per-environment action. Manual rules are preserved, and empty sources never clear the profile.
+Read the [safe synchronization guide](docs/nextdns-safe-sync.md) and [one-time onboarding steps](docs/nextdns-onboarding.md). After approved onboarding, update hosts and run `Sync / ALL` once for all connected profiles, without a review ID. Preview and scheduled runs remain read-only. Sync is off by default, manual rules stay protected, and empty sources never clear a profile.
 
 ## Comparison of free plans: NextDNS vs Cloudflare
 

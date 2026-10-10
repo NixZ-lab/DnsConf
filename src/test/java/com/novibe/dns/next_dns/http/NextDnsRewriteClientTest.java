@@ -9,6 +9,29 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class NextDnsRewriteClientTest {
+    @Test void realHttp429StopsAfterOneRequestWithoutRetry() throws Exception {
+        var calls = new java.util.concurrent.atomic.AtomicInteger();
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1",0),0);
+        server.createContext("/rewrites",exchange -> {
+            calls.incrementAndGet();
+            byte[] bytes="{\"errors\":[{\"code\":\"rate_limit\"}]}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Retry-After","60");
+            exchange.sendResponseHeaders(429,bytes.length);
+            exchange.getResponseBody().write(bytes);exchange.close();
+        });
+        server.start();
+        try {
+            var c=new NextDnsRewriteClient() {
+                @Override protected void pace() {}
+                @Override protected String apiUrl() {return "http://127.0.0.1:"+server.getAddress().getPort();}
+                @Override protected String authHeaderValue() {return "synthetic-test-only";}
+            };
+            c.setHttpClient(java.net.http.HttpClient.newHttpClient());c.setJsonMapper(new Gson());
+            var error=assertThrows(com.novibe.common.exception.DnsHttpError.class,
+                () -> c.createVerified(new CreateRewriteDto("example.com","1.2.3.4")));
+            assertEquals(429,error.getCode());assertEquals(1,calls.get());
+        } finally {server.stop(0);}
+    }
     static class Client extends NextDnsRewriteClient {
         Deque<String> replies = new ArrayDeque<>(); List<String> paths = new ArrayList<>();
         Client(String... values) { replies.addAll(List.of(values)); setJsonMapper(new Gson()); }
