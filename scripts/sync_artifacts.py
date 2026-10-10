@@ -1,5 +1,6 @@
 """Restore encrypted Actions artifacts with workflow provenance and safe ZIP extraction."""
 import argparse
+from datetime import datetime
 import hashlib
 import hmac
 import io
@@ -7,6 +8,8 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import subprocess
+import shutil
+import tempfile
 import zipfile
 
 ENVIRONMENTS = {"DNS", "DNS_WIFE", "DNS_DIRECTOR", "DNS_PV"}
@@ -47,8 +50,101 @@ def artifacts(repo, name):
         batch = api(f"repos/{repo}/actions/artifacts?name={name}&per_page=100&page={page}")["artifacts"]
         found.extend(a for a in batch if a["name"] == name)
         if len(batch) < 100:
-            return sorted(found, key=lambda a: a["id"], reverse=True)
+            return found
         page += 1
+
+
+def timestamp(value):
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("Journal chronology requires timezone-aware timestamps")
+    return parsed
+
+
+def pages(path, key):
+    found = []
+    page = 1
+    while True:
+        batch = api(f"{path}?per_page=100&page={page}")[key]
+        found.extend(batch)
+        if len(batch) < 100:
+            return found
+        page += 1
+
+
+def latest_state(repo, environment):
+    """Find the last state-producing attempt, including failed checkpoints.
+
+    Scan run history as well as artifacts: a missing newer journal must not
+    silently roll ownership back. A rerun's original created_at/run_number is
+    unchanged, so use attempt-specific run_started_at and artifact timestamps.
+    """
+    prefix = f"repos/{repo}/actions"
+    items = artifacts(repo, f"nextdns-state-{environment}")
+    runs = pages(f"{prefix}/workflows/github_action.yml/runs", "workflow_runs")
+    attempts = []
+    for run in runs:
+        if not trusted(run):
+            continue
+        last = run["run_attempt"]
+        if str(run["id"]) == os.environ.get("GITHUB_RUN_ID"):
+            # The running job has not uploaded its state yet. On a rerun, its
+            # previous attempt remains a candidate; never discard that checkpoint.
+            last -= 1
+        if run["run_attempt"] < 1:
+            raise ValueError("Invalid workflow attempt")
+        for number in range(last, 0, -1):
+            attempt = run if number == run["run_attempt"] else api(f"{prefix}/runs/{run['id']}/attempts/{number}")
+            if not trusted(attempt) or attempt["id"] != run["id"] or attempt["run_attempt"] != number:
+                raise RuntimeError("Unverified workflow attempt")
+            start = timestamp(attempt["run_started_at"])
+            if timestamp(attempt["created_at"]) > start or start > timestamp(attempt["updated_at"]):
+                raise ValueError("Inconsistent workflow chronology")
+            attempts.append((start, attempt))
+
+    latest = None
+    for start, run in sorted(attempts, key=lambda pair: pair[0], reverse=True):
+        if latest is not None and start < latest[0]:
+            break
+        jobs = pages(f"{prefix}/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs")
+        names = {f"{environment} / {mode}" for mode in ("sync", "apply", "adopt")}
+        mutations = [job for job in jobs if job["name"] in names]
+        # Disabled Sync explicitly skips restoring, writing and saving state.
+        mutations = [job for job in mutations if not (
+            job.get("conclusion") == "success" and any(
+                step["name"] == "Restore latest ownership state" and step.get("conclusion") == "skipped"
+                for step in job.get("steps", [])))]
+        run_items = [a for a in items if a["workflow_run"]["id"] == run["id"]]
+        candidates = [a for a in run_items if start <= timestamp(a["created_at"]) <= timestamp(run["updated_at"])]
+        if not mutations and not candidates:
+            continue
+        if latest is not None:
+            raise RuntimeError("Ambiguous latest journal workflow chronology")
+        if run["status"] != "completed":
+            raise RuntimeError("Latest journal workflow attempt is incomplete")
+        # Artifacts from previous attempts share the run ID, but not this window.
+        if len(candidates) != 1:
+            raise RuntimeError("Missing or ambiguous latest ownership journal; never fall back")
+        latest = (start, run, candidates[0])
+
+    if latest is None:
+        # No history and no artifacts is first onboarding. Existing artifacts
+        # without verifiable run provenance must never be treated as an empty state.
+        if items:
+            raise RuntimeError("Ownership journal has no trusted workflow history")
+        return None
+    _, run, artifact = latest
+    if artifact["expired"]:
+        raise RuntimeError("Latest state expired. Restore a reviewed saved journal; never auto-reset ownership.")
+    # Conflicting artifact chronology also fails closed, instead of using IDs
+    # to break a tie or choosing a checkpoint from an older attempt.
+    for other in items:
+        if timestamp(other["created_at"]) <= timestamp(artifact["created_at"]):
+            continue
+        source = api(f"{prefix}/runs/{other['workflow_run']['id']}")
+        if trusted(source) and str(source["id"]) != os.environ.get("GITHUB_RUN_ID"):
+            raise RuntimeError("Conflicting journal artifact chronology")
+    return run, artifact
 
 
 def crypt(data, environment, decrypt=False):
@@ -95,17 +191,34 @@ def unseal_artifact(data, environment, kind):
 
 
 def restore(repo, environment, destination):
-    for artifact in artifacts(repo, f"nextdns-state-{environment}"):
-        run = api(f"repos/{repo}/actions/runs/{artifact['workflow_run']['id']}")
-        if not trusted(run):
-            continue
-        if artifact["expired"]:
-            raise RuntimeError("Latest state expired. Restore a reviewed saved journal; never auto-reset ownership.")
-        extract(unseal_artifact(api(f"repos/{repo}/actions/artifacts/{artifact['id']}/zip", True), environment, "state"), destination, {"state.json", "result.json"})
+    selected = latest_state(repo, environment)
+    if selected is not None:
+        run, artifact = selected
+        blob = api(f"repos/{repo}/actions/artifacts/{artifact['id']}/zip", True)
+        if artifact.get("digest") != "sha256:" + hashlib.sha256(blob).hexdigest():
+            raise ValueError("Latest journal artifact digest mismatch")
+        plaintext = unseal_artifact(blob, environment, "state")
+        with tempfile.TemporaryDirectory() as staging:
+            extract(plaintext, staging, {"state.json", "result.json"})
+            states = list(Path(staging).glob("*/state.json"))
+            if len(states) != 1:
+                raise ValueError("Latest journal must contain exactly one profile state")
+            state = states[0]
+            data = json.loads(state.read_text())
+            if (data.get("version") != 1 or data.get("profile") != state.parent.name
+                    or not isinstance(data.get("managed"), list)
+                    or (os.environ.get("CLIENT_ID") and data["profile"] != os.environ["CLIENT_ID"])):
+                raise ValueError("Invalid latest ownership journal")
+            if any(p.parent != state.parent for p in Path(staging).glob("*/*.json")):
+                raise ValueError("Unexpected profile in latest journal")
+            target = Path(destination) / state.parent.name / "state.json"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(state, target)
+            target.chmod(0o600)
         # Reports belong to their producing run and must never be mistaken for this run's outcome.
         for old_report in Path(destination).glob("*/result.json"):
             old_report.unlink()
-        print("Restored ownership journal from run", run["id"])
+        print("Restored ownership journal from run", run["id"], "attempt", run["run_attempt"], "artifact", artifact["id"])
         return True
     print("No ownership journal found: existing rewrites will remain unmanaged.")
     return False
