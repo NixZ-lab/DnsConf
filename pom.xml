@@ -74,6 +74,12 @@
                 <version>${maven-surefire-plugin.version}</version>
                 <configuration>
                     <argLine>--enable-preview</argLine>
+                    <environmentVariables>
+                        <DNS>NEXTDNS</DNS>
+                        <CLIENT_ID>abc123</CLIENT_ID>
+                        <AUTH_SECRET>synthetic-test-only</AUTH_SECRET>
+                        <EXCLUDE_REDIRECT>exact:www.openai.com,tree:apple.com</EXCLUDE_REDIRECT>
+                    </environmentVariables>
                 </configuration>
             </plugin>
             <plugin>

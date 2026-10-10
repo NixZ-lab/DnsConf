@@ -71,7 +71,7 @@ def crypt(data, environment, decrypt=False):
 
 
 def seal(directory, environment, kind):
-    names = {"state.json"} if kind == "state" else {"plan.json", "backup.json", "state-before.json"}
+    names = {"state.json", "result.json"} if kind == "state" else {"plan.json", "backup.json", "state-before.json", "sources.json"}
     files = [p for p in Path(directory).glob("*/*.json") if p.name in names]
     if not files:
         if kind == "state":
@@ -101,7 +101,10 @@ def restore(repo, environment, destination):
             continue
         if artifact["expired"]:
             raise RuntimeError("Latest state expired. Restore a reviewed saved journal; never auto-reset ownership.")
-        extract(unseal_artifact(api(f"repos/{repo}/actions/artifacts/{artifact['id']}/zip", True), environment, "state"), destination, {"state.json"})
+        extract(unseal_artifact(api(f"repos/{repo}/actions/artifacts/{artifact['id']}/zip", True), environment, "state"), destination, {"state.json", "result.json"})
+        # Reports belong to their producing run and must never be mistaken for this run's outcome.
+        for old_report in Path(destination).glob("*/result.json"):
+            old_report.unlink()
         print("Restored ownership journal from run", run["id"])
         return True
     print("No ownership journal found: existing rewrites will remain unmanaged.")
@@ -117,7 +120,7 @@ def download_plan(repo, environment, destination, run_id, sha):
     if len(matches) != 1:
         raise RuntimeError("Missing or ambiguous preview artifact")
     extract(unseal_artifact(api(f"repos/{repo}/actions/artifacts/{matches[0]['id']}/zip", True), environment, "preview"), destination,
-            {"plan.json", "backup.json", "state-before.json"})
+            {"plan.json", "backup.json", "state-before.json", "sources.json"})
 
 
 def main():

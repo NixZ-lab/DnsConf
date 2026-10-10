@@ -117,11 +117,44 @@ class NextDnsRewriteServiceTest {
         assertThrows(IllegalArgumentException.class, () -> service().prepare("abc123", List.of(), dir));
         assertFalse(Files.exists(dir.resolve("plan.json")));
     }
+    @Test void syncDoesNotInitializeMissingJournalOrAdoptMatchingManualRecord() {
+        client.live.add(old);service().prepare("abc123",routes,dir);
+        assertThrows(IllegalStateException.class,()->service().sync("abc123",dir,routes,new com.novibe.dns.next_dns.sync.SyncPolicy(20,20,20,100,true,true)));
+        assertFalse(Files.exists(dir.resolve("state.json")));assertTrue(client.operations.isEmpty());
+    }
+    @Test void automaticSyncRevalidatesSourceAndUpdatesOnlyOwnedRule() {
+        prepare();
+        assertThrows(IllegalStateException.class,()->service().sync("abc123",dir,List.of(new BypassRoute("3.4.5.6","chatgpt.com")),new com.novibe.dns.next_dns.sync.SyncPolicy(20,20,20,5,false,false)));
+        assertTrue(client.operations.isEmpty());
+        service().sync("abc123",dir,routes,new com.novibe.dns.next_dns.sync.SyncPolicy(20,20,20,5,false,false));
+        var report=SyncFiles.read(dir.resolve("result.json"),com.novibe.dns.next_dns.sync.ExecutionReport.class);
+        assertEquals("Success",report.status);assertEquals(1,report.updated);assertEquals(0,report.added);assertEquals(0,report.deleted);
+    }
+    @Test void fullApiMetadataChangeIsDetectedEvenWithSamePlannerDto() {
+        prepare();client.extraField="manual edit";
+        assertThrows(IllegalStateException.class,()->service().apply("abc123",dir,1));
+        assertTrue(client.operations.isEmpty());
+    }
+    @Test void partialCheckpointCanBeLoadedByNewServiceAndManualRulesSurvive() {
+        client.live.add(new RewriteDto("manual","ios.chat.openai.com","5.175.161.3"));
+        prepare();client.failDelete=true;
+        assertThrows(IllegalStateException.class,()->service().apply("abc123",dir,1));
+        assertEquals("Failed",SyncFiles.read(dir.resolve("result.json"),com.novibe.dns.next_dns.sync.ExecutionReport.class).status);
+        client.failDelete=false;service().prepare("abc123",routes,dir);service().apply("abc123",dir,1);
+        assertTrue(client.live.stream().anyMatch(r->r.id().equals("manual") && r.content().equals("5.175.161.3")));
+        assertEquals(1,SyncFiles.read(dir.resolve("state.json"),State.class).managed().size());
+    }
     static class FakeClient extends NextDnsRewriteClient {
         List<RewriteDto> live = new ArrayList<>(); List<String> operations = new ArrayList<>();
         boolean failCreate, failDelete;
+        String extraField;
         @Override public List<RewriteDto> fetchRewrites() { return List.copyOf(live); }
-        @Override public List<com.google.gson.JsonObject> getLastSnapshot() { return List.of(new com.google.gson.JsonObject()); }
+        @Override public List<com.google.gson.JsonObject> getLastSnapshot() {
+            var page=new com.google.gson.JsonObject();
+            page.add("data",new com.google.gson.Gson().toJsonTree(live));
+            if(extraField!=null) page.getAsJsonArray("data").get(0).getAsJsonObject().addProperty("unknown",extraField);
+            return List.of(page);
+        }
         @Override public RewriteDto createVerified(CreateRewriteDto r) {
             operations.add("create"); if (failCreate) throw new IllegalStateException("POST failed");
             var created = new RewriteDto("new" + live.size(), r.name(), r.content()); live.add(created); return created;

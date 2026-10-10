@@ -6,12 +6,12 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Preview or apply a previously reviewed plan
+        description: Preview, Sync onboarded profiles, or reviewed migration
         type: choice
-        options: [dry-run, adopt, apply]
-        default: dry-run
+        options: [preview, sync, dry-run, adopt, apply]
+        default: preview
       environment:
-        description: DNS environment (apply requires one environment)
+        description: DNS environment (Sync supports ALL; adopt/apply require one)
         type: choice
         options: [ALL, DNS, DNS_WIFE, DNS_DIRECTOR, DNS_PV]
         default: ALL
@@ -66,42 +66,46 @@ jobs:
       INITIALIZE: ${{ inputs.initialize && 'true' || 'false' }}
       REVIEW_RUN_ID: ${{ inputs.review_run_id }}
       SELECTED_ENVIRONMENT: ${{ inputs.environment }}
+      SYNC_ENABLED: ${{ vars.SYNC_ENABLED || 'false' }}
+      SYNC_MAX_CREATE: ${{ vars.SYNC_MAX_CREATE || '20' }}
+      SYNC_MAX_UPDATE: ${{ vars.SYNC_MAX_UPDATE || '20' }}
+      SYNC_MAX_DELETE: ${{ vars.SYNC_MAX_DELETE || '20' }}
+      SYNC_MAX_DELETE_PERCENT: ${{ vars.SYNC_MAX_DELETE_PERCENT || '5' }}
+      SYNC_ALLOW_NEW_WWW: ${{ vars.SYNC_ALLOW_NEW_WWW || 'false' }}
+      SYNC_ALLOW_NEW_OPENAI: ${{ vars.SYNC_ALLOW_NEW_OPENAI || 'false' }}
       GH_TOKEN: ${{ github.token }}
       TZ: Europe/Moscow
     steps:
       - uses: actions/checkout@v5
       - name: Validate execution scope
+        id: scope
         run: |
-          python3 - <<'PY'
-          import os
-          assert os.environ['DNS'].strip().upper() == 'NEXTDNS', 'This workflow only supports NextDNS'
-          assert len(os.environ['CLIENT_ID']) == 6 and all(c in '0123456789abcdef' for c in os.environ['CLIENT_ID']), 'One NextDNS profile per environment required'
-          assert os.environ['MAX_DELETE'].isdigit(), 'max_delete must be a non-negative integer'
-          if os.environ['DRY_RUN'] == 'false':
-              assert os.environ['GITHUB_REF'] == 'refs/heads/main', 'Apply is restricted to main'
-              assert os.environ['SELECTED_ENVIRONMENT'] != 'ALL', 'Review and apply one environment at a time'
-              assert os.environ['REVIEW_RUN_ID'].isdigit(), 'A reviewed preview run ID is required'
-          if os.environ['SYNC_MODE'] == 'adopt':
-              assert os.environ['ADOPT_IDS'].strip(), 'Explicitly reviewed IDs are required for adoption'
-          PY
+          python3 scripts/sync_scope.py
       - uses: actions/setup-java@v5
+        if: steps.scope.outputs.skip != 'true'
         with:
           distribution: temurin
           java-version: '26'
           cache: maven
       - name: Build and test
+        if: steps.scope.outputs.skip != 'true'
         run: mvn -B clean package
       - name: Load reviewed preview
-        if: inputs.mode == 'apply' || inputs.mode == 'adopt'
+        if: steps.scope.outputs.skip != 'true' && (inputs.mode == 'apply' || inputs.mode == 'adopt')
         run: python3 scripts/sync_artifacts.py plan '${{ matrix.environment }}' --run-id "$REVIEW_RUN_ID"
       - name: Restore latest ownership state
+        if: steps.scope.outputs.skip != 'true'
+        env:
+          DRY_RUN: ${{ inputs.mode == 'sync' && 'false' || env.DRY_RUN }}
         run: python3 scripts/sync_artifacts.py state '${{ matrix.environment }}'
       - name: Prepare preview and backup (read only)
-        if: inputs.mode != 'apply' && inputs.mode != 'adopt'
+        if: steps.scope.outputs.skip != 'true' && inputs.mode != 'apply' && inputs.mode != 'adopt'
         run: java --enable-preview -jar target/dns-block-and-redirect-configurer-1.0-SNAPSHOT.jar
       - name: Encrypt preview and backup
+        if: steps.scope.outputs.skip != 'true'
         run: python3 scripts/sync_artifacts.py seal-preview '${{ matrix.environment }}'
       - name: Preserve reviewed plan and backup before any mutations
+        if: steps.scope.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: nextdns-preview-${{ matrix.environment }}
@@ -109,16 +113,52 @@ jobs:
           if-no-files-found: error
           retention-days: 90
       - name: Apply reviewed plan or adopt reviewed IDs
-        if: inputs.mode == 'apply' || inputs.mode == 'adopt'
+        if: steps.scope.outputs.skip != 'true' && (inputs.mode == 'apply' || inputs.mode == 'adopt')
+        run: java --enable-preview -jar target/dns-block-and-redirect-configurer-1.0-SNAPSHOT.jar
+      - name: Sync automatically checked plan
+        if: steps.scope.outputs.skip != 'true' && inputs.mode == 'sync'
+        env:
+          DRY_RUN: 'false'
         run: java --enable-preview -jar target/dns-block-and-redirect-configurer-1.0-SNAPSHOT.jar
       - name: Encrypt journal even after partial failure
-        if: always() && (inputs.mode == 'apply' || inputs.mode == 'adopt')
+        if: always() && steps.scope.outputs.skip != 'true' && (inputs.mode == 'apply' || inputs.mode == 'adopt' || inputs.mode == 'sync')
         run: python3 scripts/sync_artifacts.py seal-state '${{ matrix.environment }}'
       - name: Preserve journal even after partial failure
-        if: always() && (inputs.mode == 'apply' || inputs.mode == 'adopt')
+        if: always() && steps.scope.outputs.skip != 'true' && (inputs.mode == 'apply' || inputs.mode == 'adopt' || inputs.mode == 'sync')
         uses: actions/upload-artifact@v4
         with:
           name: nextdns-state-${{ matrix.environment }}
           path: sealed/state.bin
           if-no-files-found: warn
           retention-days: 90
+
+      - name: Profile result summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          PROFILE_SKIPPED: ${{ steps.scope.outputs.skip }}
+          PROFILE_ENVIRONMENT: ${{ matrix.environment }}
+        run: python3 scripts/sync_report.py
+      - name: Preserve public counts only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextdns-result-${{ matrix.environment }}
+          path: profile-result-${{ matrix.environment }}.json
+          retention-days: 90
+          if-no-files-found: warn
+
+  report:
+    name: All selected profiles report
+    needs: sync
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: nextdns-result-*
+          path: results
+          merge-multiple: true
+      - name: Summarize selected profiles
+        run: python3 scripts/sync_report.py --aggregate

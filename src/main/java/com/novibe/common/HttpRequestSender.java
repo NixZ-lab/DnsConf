@@ -62,8 +62,10 @@ public abstract class HttpRequestSender {
         } else {
             requestBody = HttpRequest.BodyPublishers.ofString(body.toJson());
         }
+        boolean acquired = false;
         try {
             semaphore.acquire();
+            acquired = true;
 
             HttpRequest request = HttpRequest.newBuilder(uri)
                     .timeout(java.time.Duration.ofSeconds(30))
@@ -73,7 +75,6 @@ public abstract class HttpRequestSender {
                     .build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
-            semaphore.release();
             if (response.statusCode() > 299) {
                 DnsHttpError httpError = new DnsHttpError(response, body);
                 switch (response.statusCode()) {
@@ -87,8 +88,13 @@ public abstract class HttpRequestSender {
                 return null;
             }
             return jsonMapper.fromJson(response.body(), responseBody);
-        } catch (IOException | InterruptedException e) {
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             throw new RuntimeException(e);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        } finally {
+            if (acquired) semaphore.release();
         }
     }
 }

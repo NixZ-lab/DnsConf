@@ -46,6 +46,17 @@ class ListLoaderTest {
         assertEquals(List.of("chatgpt.com", "openai.com"), routes.stream().map(BypassRoute::website).toList());
     }
 
+    @Test void hashesRawBodyAndClearsEvidenceAfterAnySourceFailure() {
+        loader.fetchWebsites(List.of(baseUrl + "/hosts"));
+        var first=loader.getLastSources();
+        assertEquals(64,first.getFirst().sha256().length());
+        addRoute("/comment",200,"1.2.3.4 chatgpt.com\n1.2.3.4 openai.com\n# changed comment\n");
+        loader.fetchWebsites(List.of(baseUrl + "/comment"));
+        assertTrue(!first.getFirst().sha256().equals(loader.getLastSources().getFirst().sha256()));
+        assertThrows(Exception.class,()->loader.fetchWebsites(List.of(baseUrl+"/hosts",baseUrl+"/not-found")));
+        assertTrue(loader.getLastSources().isEmpty());
+    }
+
     @Test
     void failsWhenSourceIsNotFound() {
         assertTrue(messageOfFailure(baseUrl + "/not-found").contains("response code 404"));
