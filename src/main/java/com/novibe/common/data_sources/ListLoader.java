@@ -20,13 +20,13 @@ import java.util.concurrent.StructuredTaskScope;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
-@Setter(onMethod_ = @Autowired)
 public abstract class ListLoader<T> {
 
     public record SourceDigest(String url, String sha256) {}
     private List<SourceDigest> lastSources = List.of();
     public List<SourceDigest> getLastSources() { return lastSources; }
 
+    @Setter(onMethod_ = @Autowired)
     private HttpClient client;
 
     protected abstract T toObject(HostsLine hostsLine);
