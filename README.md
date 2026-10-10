@@ -8,6 +8,10 @@ Configure redirect and blocking rules for Cloudflare and NextDNS accounts.
 
 **Ready to run via GitHub Actions.** [Video guide](https://www.youtube.com/watch?v=vbAXM_xAL5I)
 
+## Safe NextDNS synchronization in this fork
+
+Read the [migration, dry-run, encrypted backups and recovery guide](docs/nextdns-safe-sync.md) before running NextDNS updates. All four personal environments are preserved. Scheduled runs now preview only; applying or adopting reviewed legacy rules is an explicit per-environment action. Manual rules are preserved, and empty sources never clear the profile.
+
 ## Comparison of free plans: NextDNS vs Cloudflare
 
 |                         | NextDNS                                                         | Cloudflare                                                                                                           |
@@ -52,7 +56,6 @@ Sign in with GitHub and provide **CLIENT_ID** and **AUTH_SECRET**. See [Setup cr
 
 1. Sign up for **Cloudflare**, open the _Zero Trust_ tab, and create an account.
    - The free plan has suitable limits for this use case.
-   - Skip the payment method by selecting _Cancel and exit_ in the top-right corner.
    - Return to the _Zero Trust_ tab.
 2. Create a **Cloudflare API token** at https://dash.cloudflare.com/profile/api-tokens with these permissions:
 
@@ -122,13 +125,13 @@ these domains are used for block processing:
 
 ## Setup excluded redirects (optional)
 
-Add domains to the `EXCLUDE_REDIRECT` environment variable, separated by commas without spaces, for example:
+Add domains to the `EXCLUDE_REDIRECT` environment variable, separated by commas (surrounding whitespace is ignored), for example:
 
 `instagram.com,twitch.com`
 
 These domains and their subdomains:
 
-- are removed from existing redirect rules;
+- are removed from DnsConf-owned redirect rules only; manual NextDNS rules are preserved;
 - are not added to new redirect rules.
 
 ---
@@ -162,7 +165,7 @@ All profiles receive the same `BLOCK`, `REDIRECT`, and `EXCLUDE_REDIRECT` settin
 
 ### Multiple profiles for one provider
 
-Add profile values to the corresponding environment secrets and variables, separated by commas without spaces. For example, for two NextDNS profiles:
+Add profile values to the corresponding environment secrets and variables, separated by commas (surrounding whitespace is ignored). For example, for two NextDNS profiles:
 
 - `AUTH_SECRET`: `secret_NextDns_1,secret_NextDns_2`
 - `CLIENT_ID`: `client_id_NextDns_1,client_id_NextDns_2`
@@ -179,7 +182,7 @@ Also list the provider for each profile in the `DNS` environment variable. For e
 
 If `DONOR_DNS` contains one value, that donor is used for all profiles.
 
-You can also provide one value per profile, separated by commas without spaces. Use `-` for profiles where donor DNS should be disabled. For example:
+You can also provide one value per profile, separated by commas (surrounding whitespace is ignored). Use `-` for profiles where donor DNS should be disabled. For example:
 
 `-,111.88.96.50,-,111.88.96.50`
 
@@ -201,18 +204,9 @@ To clear Cloudflare block or redirect settings, run the script without the corre
 
 ### NextDNS
 
-For `REDIRECT`:
+`DRY_RUN=true` (default) saves a backup and a plan without changing the profile. `DRY_RUN=false` applies that saved plan, with `MAX_DELETE=0` by default. Only rules recorded in the ownership journal can be replaced or removed. Unmanaged and manually edited rules are preserved. Empty or failed sources never clear settings. `BLOCK` is previewed only; this workflow applies Rewrites only.
 
-- an existing domain is updated if its redirect IP changes;
-- new domains are added;
-- other redirect settings remain unchanged.
-
-For `BLOCK`:
-
-- new domains are added;
-- other block settings remain unchanged.
-
-Previously generated data is removed only when both `BLOCK` and `REDIRECT` sources are empty.
+See the [safe synchronization guide](docs/nextdns-safe-sync.md) for explicit legacy adoption, encrypted artifacts and recovery.
 
 ---
 
@@ -230,6 +224,10 @@ Previously generated data is removed only when both `BLOCK` and `REDIRECT` sourc
 4. Add `AUTH_SECRET` and `CLIENT_ID` to **Environment secrets**.
 5. Add `DNS`, `REDIRECT`, `BLOCK`, `EXCLUDE_REDIRECT`, and optionally `DONOR_DNS` to **Environment variables**.
 
-The action runs daily at **01:30 UTC**. To change the schedule, edit the cron expression in `.github/workflows/github_action.yml`.
+The action produces a read-only preview daily at **01:30 UTC**. To change the schedule, edit the cron expression in `.github/workflows/github_action.yml`.
 
 To run it manually, open the _Actions_ tab and select **DNS Block&Redirect Configurer cron task**, then choose **Run workflow**.
+
+## Scheduled workflow inactivity
+
+GitHub can disable schedules in public repositories after 60 days without repository activity. Workflow runs alone do not count. Check the Actions page and re-enable the updated preview workflow if needed. See [GitHub schedule documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).

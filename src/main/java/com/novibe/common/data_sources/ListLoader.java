@@ -1,6 +1,7 @@
 package com.novibe.common.data_sources;
 
 import com.novibe.common.base_structures.HostsLine;
+import com.novibe.common.exception.UserInputException;
 import com.novibe.common.util.DataParser;
 import com.novibe.common.util.Log;
 import lombok.Setter;
@@ -41,29 +42,34 @@ public abstract class ListLoader<T> {
 
             return requests.stream()
                     .map(StructuredTaskScope.Subtask::get)
-                    .flatMap(DataParser::splitByEol)
-                    .map(String::strip)
-                    .parallel()
-                    .filter(line -> !line.isBlank())
-                    .filter(line -> !DataParser.isComment(line))
-                    .map(String::toLowerCase)
-                    .map(DataParser::parseHostsLine)
-                    .filter(Objects::nonNull)
-                    .filter(filterRelatedLines())
+                    .flatMap(body -> parseSource(body).stream())
                     .distinct()
-                    .map(this::toObject)
                     .collect(Collectors.toCollection(ArrayList::new));
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
     }
 
+    protected List<T> parseSource(String body) {
+        return DataParser.splitByEol(body).map(String::strip)
+                .filter(line -> !line.isBlank() && !DataParser.isComment(line))
+                .map(String::toLowerCase).map(DataParser::parseHostsLine)
+                .filter(Objects::nonNull).filter(filterRelatedLines())
+                .map(this::toObject).toList();
+    }
+
     private String fetchList(String url) throws IOException, InterruptedException {
         Log.io("Loading %s list from url: %s".formatted(listType(), url));
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                .timeout(java.time.Duration.ofSeconds(30))
                 .GET()
                 .build();
-        return client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)).body();
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() < 200 || response.statusCode() > 299) {
+            throw UserInputException.noStackTrace("Failed to load %s list, response code %s from url: %s"
+                    .formatted(listType(), response.statusCode(), url));
+        }
+        return response.body();
     }
 
 }

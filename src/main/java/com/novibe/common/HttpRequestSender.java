@@ -66,6 +66,7 @@ public abstract class HttpRequestSender {
             semaphore.acquire();
 
             HttpRequest request = HttpRequest.newBuilder(uri)
+                    .timeout(java.time.Duration.ofSeconds(30))
                     .header(authHeaderName(), authHeaderValue())
                     .header("Content-Type", "application/json")
                     .method(method, requestBody)
