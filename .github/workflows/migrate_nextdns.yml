@@ -1,8 +1,6 @@
 name: Migrate four NextDNS profiles to own hosts
 
 on:
-  # One-time launch on merge of this user-approved migration marker.
-  # Normal later pushes cannot retrigger the destructive migration.
   push:
     branches: [main]
     paths:
@@ -28,19 +26,21 @@ jobs:
     outputs:
       hosts_sha: ${{ steps.pin.outputs.hosts_sha }}
     steps:
-      - name: Require explicit full-profile replacement approval
+      - name: Require explicitly authorized migration
         shell: bash
         env:
           CONFIRMATION: ${{ inputs.confirmation }}
           EVENT_KIND: ${{ github.event_name }}
-          COMMIT_TITLE: ${{ github.event.head_commit.message }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
+          set -euo pipefail
           if [[ "$EVENT_KIND" == push ]]; then
-            [[ "${COMMIT_TITLE%% ||
-              { echo 'Unexpected push commit: refusing migration.' >&2; exit 1; }
+            SUBJECT="$(printf '%s' "$COMMIT_MESSAGE" | head -n 1)"
+            [[ "$SUBJECT" == "Launch approved four-profile NextDNS migration" ]] ||
+              { echo "Unexpected push: migration not authorized" >&2; exit 1; }
           else
             [[ "$CONFIRMATION" == "REPLACE_ALL_REWRITES" ]] ||
-              { echo 'Confirmation does not match.' >&2; exit 1; }
+              { echo "Manual confirmation does not match" >&2; exit 1; }
           fi
       - name: Pin public source to a Git commit
         id: pin
@@ -73,12 +73,12 @@ jobs:
     steps:
       - name: Checkout verified migration code
         uses: actions/checkout@v5
-      - name: Read NextDNS and create authenticated encrypted backup (no writes)
+      - name: Create authenticated encrypted backup (no NextDNS mutations)
         run: |
           python3 scripts/migrate_nextdns.py backup \
             --ref "${{ needs.pin.outputs.hosts_sha }}" \
             --file backup/backup.bin
-      - name: Upload encrypted backup, required before any mutation
+      - name: Upload encrypted backup (required before any mutation)
         uses: actions/upload-artifact@v4
         with:
           name: nextdns-migration-${{ github.run_id }}-${{ matrix.environment }}
@@ -111,97 +111,12 @@ jobs:
     steps:
       - name: Checkout verified migration code
         uses: actions/checkout@v5
-      - name: Download this execution's previously uploaded encrypted backup
+      - name: Download this execution's authenticated encrypted backup
         uses: actions/download-artifact@v4
         with:
           name: nextdns-migration-${{ github.run_id }}-${{ matrix.environment }}
           path: backup
-      - name: Compare fresh state with backup, replace only necessary rewrites, verify all
-        run: |
-          python3 scripts/migrate_nextdns.py apply \
-            --ref "${{ needs.pin.outputs.hosts_sha }}" \
-            --file backup/backup.bin
-\n'*}" == "Launch approved four-profile NextDNS migration" ]] ||
-              { echo 'Unexpected push commit: refusing migration.' >&2; exit 1; }
-          else
-            [[ "$CONFIRMATION" == "REPLACE_ALL_REWRITES" ]] ||
-              { echo 'Confirmation does not match.' >&2; exit 1; }
-          fi
-      - name: Pin public source to a Git commit
-        id: pin
-        shell: bash
-        run: |
-          set -euo pipefail
-          SHA=$(curl -fsSL --retry 3 https://api.github.com/repos/NixZ-lab/my-dns-config/commits/main |
-            python3 -c 'import sys,json; print(json.load(sys.stdin)["sha"])')
-          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
-          echo "hosts_sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "Source pinned to git commit $SHA" >> "$GITHUB_STEP_SUMMARY"
-
-  backups:
-    name: Backup ${{ matrix.environment }}
-    needs: pin
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      max-parallel: 1
-      matrix:
-        environment: [DNS, DNS_WIFE, DNS_DIRECTOR, DNS_PV]
-    environment: ${{ matrix.environment }}
-    env:
-      MATRIX_ENVIRONMENT: ${{ matrix.environment }}
-      DNS: ${{ vars.DNS }}
-      EXCLUDE_REDIRECT: ${{ vars.EXCLUDE_REDIRECT }}
-      CLIENT_ID: ${{ secrets.CLIENT_ID }}
-      AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
-    steps:
-      - name: Checkout verified migration code
-        uses: actions/checkout@v5
-      - name: Read NextDNS and create authenticated encrypted backup (no writes)
-        run: |
-          python3 scripts/migrate_nextdns.py backup \
-            --ref "${{ needs.pin.outputs.hosts_sha }}" \
-            --file backup/backup.bin
-      - name: Upload encrypted backup, required before any mutation
-        uses: actions/upload-artifact@v4
-        with:
-          name: nextdns-migration-${{ github.run_id }}-${{ matrix.environment }}
-          path: backup/backup.bin
-          retention-days: 90
-          if-no-files-found: error
-          compression-level: 0
-
-  apply:
-    name: Replace and verify ${{ matrix.environment }}
-    needs: [pin, backups]
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      max-parallel: 1
-      matrix:
-        environment: [DNS, DNS_WIFE, DNS_DIRECTOR, DNS_PV]
-    environment: ${{ matrix.environment }}
-    concurrency:
-      group: nextdns-upstream-${{ matrix.environment }}
-      cancel-in-progress: false
-    env:
-      MATRIX_ENVIRONMENT: ${{ matrix.environment }}
-      DNS: ${{ vars.DNS }}
-      EXCLUDE_REDIRECT: ${{ vars.EXCLUDE_REDIRECT }}
-      CLIENT_ID: ${{ secrets.CLIENT_ID }}
-      AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
-      MIGRATE_CONFIRM: ${{ github.event_name == 'push' && 'REPLACE_ALL_REWRITES' || inputs.confirmation }}
-    steps:
-      - name: Checkout verified migration code
-        uses: actions/checkout@v5
-      - name: Download this execution's previously uploaded encrypted backup
-        uses: actions/download-artifact@v4
-        with:
-          name: nextdns-migration-${{ github.run_id }}-${{ matrix.environment }}
-          path: backup
-      - name: Compare fresh state with backup, replace only necessary rewrites, verify all
+      - name: Verify current snapshot, apply minimal changes, verify all results
         run: |
           python3 scripts/migrate_nextdns.py apply \
             --ref "${{ needs.pin.outputs.hosts_sha }}" \
