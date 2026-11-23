@@ -24,5 +24,8 @@ jobs:
       - name: Test read-only NextDNS capacity audit
         run: python3 -m unittest scripts.test_audit_nextdns_capacity
 
+      - name: Test backup/encryption and full NextDNS migration offline
+        run: python3 -m unittest scripts.test_migrate_nextdns
+
       - name: Run tests
         run: mvn -B test
