@@ -102,7 +102,8 @@ def audit():
     prospective_additions = len(new_only)
     excess_source = max(0, len(desired) - MAX_REWRITES)
     # A capacity lower bound, never permission to delete or adopt an existing record.
-    minimum_retire = max(0, len(existing) + prospective_additions - MAX_REWRITES)
+    minimum_retire = (max(0, len(existing) + prospective_additions - MAX_REWRITES)
+                      if excess_source == 0 else "N/A (source exceeds limit)")
 
     summary = (
         "### NextDNS read-only capacity preflight\n"
