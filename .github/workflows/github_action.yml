@@ -9,7 +9,7 @@ on:
         description: Select one NextDNS environment or ALL
         type: choice
         required: true
-        default: DNS
+        default: ALL
         options: [DNS, DNS_WIFE, DNS_DIRECTOR, DNS_PV, ALL]
       confirm_write:
         description: Confirm running original upstream code with LIVE NextDNS writes
