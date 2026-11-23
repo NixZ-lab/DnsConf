@@ -1,7 +1,10 @@
 import unittest
+import contextlib
+import io
+import json
 from unittest.mock import patch
 
-from scripts.audit_nextdns_capacity import domains_from_hosts, excludes_from_env, is_excluded, live_writes_authorized
+from scripts.audit_nextdns_capacity import domains_from_hosts, excludes_from_env, is_excluded, live_writes_authorized, audit
 
 
 class CapacityAuditTest(unittest.TestCase):
@@ -35,6 +38,34 @@ class CapacityAuditTest(unittest.TestCase):
         for env, expected in cases:
             with self.subTest(env=env), patch.dict("os.environ", env, clear=True):
                 self.assertEqual(live_writes_authorized(), expected)
+
+
+    def test_read_only_inventory_counts_without_printing_domains(self):
+        env = {
+            "DNS": "NextDNS",
+            "CLIENT_ID": "testprofile",
+            "AUTH_SECRET": "fake",
+            "REDIRECT": "https://example.invalid/hosts",
+            "EXCLUDE_REDIRECT": "",
+        }
+        source = "1.1.1.1 keep.example\\n1.1.1.1 new.example\\n"
+        existing = json.dumps({"data": [
+            {"name": "keep.example", "content": "1.1.1.1"},
+            {"name": "old.example", "content": "1.1.1.1"},
+        ]})
+        with patch.dict("os.environ", env, clear=True), patch(
+            "scripts.audit_nextdns_capacity.fetch_text", side_effect=[source, existing]
+        ):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                audit()
+        report = output.getvalue()
+        self.assertIn("Domains already present in both source and profile: **1**", report)
+        self.assertIn("Existing domains absent from current source (review candidates): **1**", report)
+        self.assertIn("New domain names required: **1**", report)
+        self.assertNotIn("old.example", report)
+        self.assertNotIn("new.example", report)
+
 
 
 if __name__ == "__main__":
