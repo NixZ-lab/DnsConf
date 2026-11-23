@@ -6,11 +6,11 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: Select one existing NextDNS environment
+        description: Select one NextDNS environment or ALL
         type: choice
         required: true
-        default: DNS
-        options: [DNS, DNS_WIFE, DNS_DIRECTOR, DNS_PV]
+        default: ALL
+        options: [DNS, DNS_WIFE, DNS_DIRECTOR, DNS_PV, ALL]
       confirm_write:
         description: Confirm running original upstream code with LIVE NextDNS writes
         type: boolean
@@ -29,7 +29,7 @@ jobs:
       fail-fast: false
       max-parallel: 1
       matrix:
-        environment: ${{ fromJSON(github.event_name == 'schedule' && '["DNS","DNS_WIFE","DNS_DIRECTOR","DNS_PV"]' || format('["{0}"]', inputs.environment)) }}
+        environment: ${{ fromJSON((github.event_name == 'schedule' || inputs.environment == 'ALL') && '["DNS","DNS_WIFE","DNS_DIRECTOR","DNS_PV"]' || format('["{0}"]', inputs.environment)) }}
     environment: ${{ matrix.environment }}
     concurrency:
       group: nextdns-upstream-${{ matrix.environment }}
@@ -49,6 +49,12 @@ jobs:
       TZ: Europe/Moscow
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Audit NextDNS rewrite capacity (read-only)
+        run: python3 scripts/audit_nextdns_capacity.py
+
       - name: Guard against accidental live writes or empty sources
         id: gate
         shell: bash
@@ -73,10 +79,6 @@ jobs:
             exit 1
           fi
           echo 'run=true' >> "$GITHUB_OUTPUT"
-
-      - name: Checkout repository
-        if: steps.gate.outputs.run == 'true'
-        uses: actions/checkout@v5
 
       - name: Set up JDK 26
         if: steps.gate.outputs.run == 'true'
