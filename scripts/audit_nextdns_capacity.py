@@ -16,6 +16,19 @@ MAX_REWRITES = 500
 BLOCK_IPS = {"0.0.0.0", "127.0.0.1", "::1"}
 
 
+class CapacityBlocked(ValueError):
+    """A predictable unsafe-to-write state, not a broken read-only audit."""
+
+
+def live_writes_authorized():
+    event = os.getenv("EVENT_NAME", "")
+    if event == "schedule":
+        return os.getenv("UPSTREAM_AUTORUN_ENABLED", "").lower() == "true"
+    if event == "workflow_dispatch":
+        return os.getenv("CONFIRM_WRITE", "").lower() == "true"
+    return False
+
+
 def fetch_text(url, *, headers=None):
     if urlsplit(url).scheme != "https":
         raise ValueError("Only HTTPS source URLs are supported")
@@ -104,12 +117,12 @@ def audit():
     # We cannot distinguish manually-created rules with the original upstream.
     # The conservative count intentionally avoids any cleanup to make a profile fit.
     if len(existing) > MAX_REWRITES or len(desired) > MAX_REWRITES or estimated_unique_total > MAX_REWRITES:
-        raise ValueError(
+        raise CapacityBlocked(
             "Capacity exceeded. The original upstream would fail with listLimitExceeded. "
             "Curate REDIRECT and reconcile legacy rules before enabling scheduled writes."
         )
     if potentially_deleted_exclusions:
-        raise ValueError(
+        raise CapacityBlocked(
             "Existing rewrites match EXCLUDE_REDIRECT. Original upstream would delete them. "
             "Review those exclusions before enabling scheduled writes."
         )
@@ -118,6 +131,16 @@ def audit():
 if __name__ == "__main__":
     try:
         audit()
+    except CapacityBlocked as error:
+        message = f"NextDNS writes blocked: {error}"
+        if live_writes_authorized():
+            print(message, file=sys.stderr)
+            sys.exit(1)
+        print(f"::warning::{message} Preview only; no write was attempted.")
+        if path := os.getenv("GITHUB_STEP_SUMMARY"):
+            with open(path, "a", encoding="utf-8") as output:
+                output.write(f"\n**Preview only: live synchronization blocked.** {error}\n")
+        sys.exit(0)
     except (HTTPError, URLError, ValueError, json.JSONDecodeError) as error:
-        print(f"NextDNS preflight BLOCKED: {type(error).__name__}: {error}", file=sys.stderr)
+        print(f"NextDNS audit FAILED: {type(error).__name__}: {error}", file=sys.stderr)
         sys.exit(1)
