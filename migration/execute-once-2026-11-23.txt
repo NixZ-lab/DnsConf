@@ -1,0 +1,3 @@
+User approval: fully replace existing NextDNS rewrites in DNS, DNS_WIFE, DNS_DIRECTOR and DNS_PV with NixZ-lab/my-dns-config/main/hosts, with fresh encrypted backups before any changes.
+
+This marker is intentionally unique: the migration workflow runs once when it first reaches main in an explicitly authorized commit. It is not used by ordinary scheduled synchronization.
