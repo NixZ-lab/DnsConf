@@ -30,5 +30,8 @@ jobs:
       - name: Test successful-migration gate for scheduled sync
         run: python3 -m unittest scripts.test_nextdns_activation
 
+      - name: Validate workflow expressions and syntax (actionlint)
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/*.yml
+
       - name: Run tests
         run: mvn -B test
