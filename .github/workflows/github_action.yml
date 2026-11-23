@@ -38,7 +38,8 @@ jobs:
     env:
       DNS: ${{ vars.DNS }}
       BLOCK: ${{ vars.BLOCK }}
-      REDIRECT: ${{ vars.REDIRECT }}
+      # One shared hosts source for DNS, DNS_WIFE, DNS_DIRECTOR and DNS_PV.
+      REDIRECT: https://raw.githubusercontent.com/NixZ-lab/my-dns-config/main/hosts
       EXCLUDE_REDIRECT: ${{ vars.EXCLUDE_REDIRECT }}
       DONOR_DNS: ${{ vars.DONOR_DNS }}
       CLIENT_ID: ${{ secrets.CLIENT_ID }}
