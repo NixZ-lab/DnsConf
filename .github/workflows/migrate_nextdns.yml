@@ -1,6 +1,12 @@
 name: Migrate four NextDNS profiles to own hosts
 
 on:
+  # One-time launch on merge of this user-approved migration marker.
+  # Normal later pushes cannot retrigger the destructive migration.
+  push:
+    branches: [main]
+    paths:
+      - migration/execute-once-2026-11-23.txt
   workflow_dispatch:
     inputs:
       confirmation:
@@ -26,8 +32,16 @@ jobs:
         shell: bash
         env:
           CONFIRMATION: ${{ inputs.confirmation }}
+          EVENT_KIND: ${{ github.event_name }}
+          COMMIT_TITLE: ${{ github.event.head_commit.message }}
         run: |
-          test "$CONFIRMATION" = "REPLACE_ALL_REWRITES" || { echo 'Confirmation does not match.' >&2; exit 1; }
+          if [[ "$EVENT_KIND" == push ]]; then
+            [[ "$COMMIT_TITLE" == "Launch approved four-profile NextDNS migration" ]] ||
+              { echo 'Unexpected push commit: refusing migration.' >&2; exit 1; }
+          else
+            [[ "$CONFIRMATION" == "REPLACE_ALL_REWRITES" ]] ||
+              { echo 'Confirmation does not match.' >&2; exit 1; }
+          fi
       - name: Pin public source to a Git commit
         id: pin
         shell: bash
@@ -93,7 +107,7 @@ jobs:
       EXCLUDE_REDIRECT: ${{ vars.EXCLUDE_REDIRECT }}
       CLIENT_ID: ${{ secrets.CLIENT_ID }}
       AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
-      MIGRATE_CONFIRM: ${{ inputs.confirmation }}
+      MIGRATE_CONFIRM: ${{ github.event_name == 'push' && 'REPLACE_ALL_REWRITES' || inputs.confirmation }}
     steps:
       - name: Checkout verified migration code
         uses: actions/checkout@v5
