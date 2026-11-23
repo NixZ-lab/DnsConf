@@ -1,6 +1,7 @@
 import unittest
+from unittest.mock import patch
 
-from scripts.audit_nextdns_capacity import domains_from_hosts, excludes_from_env, is_excluded
+from scripts.audit_nextdns_capacity import domains_from_hosts, excludes_from_env, is_excluded, live_writes_authorized
 
 
 class CapacityAuditTest(unittest.TestCase):
@@ -22,6 +23,18 @@ class CapacityAuditTest(unittest.TestCase):
         self.assertTrue(is_excluded("sub.example.com", excluded))
         self.assertTrue(is_excluded("hello.com", excluded))
         self.assertFalse(is_excluded("notexample.com", excluded))
+
+    def test_live_write_flag_only_for_explicit_authorization(self):
+        cases = [
+            ({"EVENT_NAME": "workflow_dispatch", "CONFIRM_WRITE": "false"}, False),
+            ({"EVENT_NAME": "workflow_dispatch", "CONFIRM_WRITE": "true"}, True),
+            ({"EVENT_NAME": "schedule", "UPSTREAM_AUTORUN_ENABLED": "false"}, False),
+            ({"EVENT_NAME": "schedule", "UPSTREAM_AUTORUN_ENABLED": "true"}, True),
+            ({"EVENT_NAME": "pull_request", "CONFIRM_WRITE": "true"}, False),
+        ]
+        for env, expected in cases:
+            with self.subTest(env=env), patch.dict("os.environ", env, clear=True):
+                self.assertEqual(live_writes_authorized(), expected)
 
 
 if __name__ == "__main__":
