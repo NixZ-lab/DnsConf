@@ -2,7 +2,7 @@ name: DNS Block&Redirect Configurer cron task
 
 on:
   schedule:
-    - cron: '37 1 * * *' # 04:37 Minsk; non-round minute reduces dropped/delayed schedules
+    - cron: '37 1 * * *' # 04:37 Minsk (UTC+3)
   workflow_dispatch:
     inputs:
       environment:
@@ -12,19 +12,20 @@ on:
         default: ALL
         options: [DNS, DNS_WIFE, DNS_DIRECTOR, DNS_PV, ALL]
       confirm_write:
-        description: Confirm running original upstream code with LIVE NextDNS writes
+        description: Confirm live NextDNS writes after initial migration is completed
         type: boolean
         required: true
         default: false
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   build:
     name: ${{ matrix.environment }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -36,63 +37,85 @@ jobs:
       cancel-in-progress: false
 
     env:
+      MATRIX_ENVIRONMENT: ${{ matrix.environment }}
       DNS: ${{ vars.DNS }}
       BLOCK: ${{ vars.BLOCK }}
-      # One shared hosts source for DNS, DNS_WIFE, DNS_DIRECTOR and DNS_PV.
       REDIRECT: https://raw.githubusercontent.com/NixZ-lab/my-dns-config/main/hosts
       EXCLUDE_REDIRECT: ${{ vars.EXCLUDE_REDIRECT }}
       DONOR_DNS: ${{ vars.DONOR_DNS }}
       CLIENT_ID: ${{ secrets.CLIENT_ID }}
       AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
-      UPSTREAM_AUTORUN_ENABLED: ${{ vars.UPSTREAM_AUTORUN_ENABLED }}
-      EVENT_NAME: ${{ github.event_name }}
-      CONFIRM_WRITE: ${{ inputs.confirm_write }}
-      TZ: Europe/Moscow
+      GITHUB_TOKEN: ${{ github.token }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Audit NextDNS rewrite capacity (read-only)
+      - name: Verify complete one-time migration before auto-sync
+        id: migrated
+        run: python3 scripts/nextdns_activation.py
+
+      - name: Determine whether this execution may mutate NextDNS
+        id: live
+        shell: bash
+        env:
+          EVENT_KIND: ${{ github.event_name }}
+          EXPLICIT_CONFIRM: ${{ inputs.confirm_write }}
+          MIGRATED: ${{ steps.migrated.outputs.activated }}
+        run: |
+          set -euo pipefail
+          RUN=false
+          if [[ "$EVENT_KIND" == schedule && "$MIGRATED" == true ]]; then
+            RUN=true
+          elif [[ "$EVENT_KIND" == workflow_dispatch && "$MIGRATED" == true &&
+                  "$EXPLICIT_CONFIRM" == true ]]; then
+            RUN=true
+          fi
+          echo "run=$RUN" >> "$GITHUB_OUTPUT"
+          if [[ "$RUN" == false ]]; then
+            echo "Read-only check: initial migration not completed or manual live-write confirmation absent." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Read-only NextDNS capacity audit before activation
+        if: steps.live.outputs.run != 'true'
+        env:
+          EVENT_NAME: workflow_dispatch
+          CONFIRM_WRITE: 'false'
         run: python3 scripts/audit_nextdns_capacity.py
 
-      - name: Guard against accidental live writes or empty sources
-        id: gate
+      - name: Pin latest hosts source to an immutable commit
+        if: steps.live.outputs.run == 'true'
+        id: pin
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$EVENT_NAME" == schedule && "$UPSTREAM_AUTORUN_ENABLED" != true ]]; then
-            echo 'run=false' >> "$GITHUB_OUTPUT"
-            echo "Schedule not armed for this environment: UPSTREAM_AUTORUN_ENABLED is not true." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          if [[ "$EVENT_NAME" == workflow_dispatch && "$CONFIRM_WRITE" != true ]]; then
-            echo 'run=false' >> "$GITHUB_OUTPUT"
-            echo 'Manual run skipped: confirm_write was not checked.' >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          if [[ -z "$DNS" || -z "$CLIENT_ID" || -z "$AUTH_SECRET" ]]; then
-            echo 'DNS, CLIENT_ID or AUTH_SECRET is missing.' >&2
-            exit 1
-          fi
-          if [[ -z "$BLOCK" && -z "$REDIRECT" ]]; then
-            echo 'Both BLOCK and REDIRECT are empty. Refusing to run upstream removeAll().' >&2
-            exit 1
-          fi
-          echo 'run=true' >> "$GITHUB_OUTPUT"
+          SHA=$(curl -fsSL --retry 3 https://api.github.com/repos/NixZ-lab/my-dns-config/commits/main |
+            python3 -c 'import sys,json; print(json.load(sys.stdin)["sha"])')
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          echo "hosts_sha=$SHA" >> "$GITHUB_OUTPUT"
 
-      - name: Set up JDK 26
-        if: steps.gate.outputs.run == 'true'
-        uses: actions/setup-java@v5
+      - name: Create fresh encrypted profile backup before any write
+        if: steps.live.outputs.run == 'true'
+        run: |
+          python3 scripts/migrate_nextdns.py backup \
+            --ref "${{ steps.pin.outputs.hosts_sha }}" \
+            --file backup/backup.bin
+
+      - name: Preserve encrypted backup in GitHub Actions
+        if: steps.live.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
         with:
-          distribution: temurin
-          java-version: '26'
-          cache: maven
+          name: nextdns-sync-${{ github.run_id }}-${{ matrix.environment }}
+          path: backup/backup.bin
+          retention-days: 90
+          if-no-files-found: error
+          compression-level: 0
 
-      - name: Build with Maven
-        if: steps.gate.outputs.run == 'true'
-        run: mvn -B clean package
-
-      - name: Run original upstream application (mutates NextDNS)
-        if: steps.gate.outputs.run == 'true'
-        run: java --enable-preview -jar target/*.jar
+      - name: Reconcile and verify NextDNS rewrites
+        if: steps.live.outputs.run == 'true'
+        env:
+          MIGRATE_CONFIRM: REPLACE_ALL_REWRITES
+        run: |
+          python3 scripts/migrate_nextdns.py apply \
+            --ref "${{ steps.pin.outputs.hosts_sha }}" \
+            --file backup/backup.bin
