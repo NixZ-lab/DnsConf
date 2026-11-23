@@ -67,6 +67,8 @@ jobs:
     env:
       MATRIX_ENVIRONMENT: ${{ matrix.environment }}
       DNS: ${{ vars.DNS }}
+      BLOCK: ${{ vars.BLOCK }}
+      DONOR_DNS: ${{ vars.DONOR_DNS }}
       EXCLUDE_REDIRECT: ${{ vars.EXCLUDE_REDIRECT }}
       CLIENT_ID: ${{ secrets.CLIENT_ID }}
       AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
@@ -104,6 +106,8 @@ jobs:
     env:
       MATRIX_ENVIRONMENT: ${{ matrix.environment }}
       DNS: ${{ vars.DNS }}
+      BLOCK: ${{ vars.BLOCK }}
+      DONOR_DNS: ${{ vars.DONOR_DNS }}
       EXCLUDE_REDIRECT: ${{ vars.EXCLUDE_REDIRECT }}
       CLIENT_ID: ${{ secrets.CLIENT_ID }}
       AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
