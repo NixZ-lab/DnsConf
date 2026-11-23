@@ -49,6 +49,12 @@ jobs:
       TZ: Europe/Moscow
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Audit NextDNS rewrite capacity (read-only)
+        run: python3 scripts/audit_nextdns_capacity.py
+
       - name: Guard against accidental live writes or empty sources
         id: gate
         shell: bash
@@ -73,10 +79,6 @@ jobs:
             exit 1
           fi
           echo 'run=true' >> "$GITHUB_OUTPUT"
-
-      - name: Checkout repository
-        if: steps.gate.outputs.run == 'true'
-        uses: actions/checkout@v5
 
       - name: Set up JDK 26
         if: steps.gate.outputs.run == 'true'
