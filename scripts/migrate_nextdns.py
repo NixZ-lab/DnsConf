@@ -175,6 +175,10 @@ def env_settings():
         raise MigrationError("Invalid environment")
     if os.environ.get("DNS", "").upper() != "NEXTDNS":
         raise MigrationError("Environment is not NextDNS")
+    if os.environ.get("DONOR_DNS", "").strip():
+        raise MigrationError("DONOR_DNS is not supported by the managed Rewrites workflow")
+    if os.environ.get("BLOCK", "").strip():
+        raise MigrationError("BLOCK is configured; rewrite-only reconciliation must not silently ignore it")
     profile = os.environ.get("CLIENT_ID", "")
     secret = os.environ.get("AUTH_SECRET", "")
     if not profile or not secret:
