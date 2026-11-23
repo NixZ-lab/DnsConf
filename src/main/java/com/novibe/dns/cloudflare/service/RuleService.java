@@ -1,5 +1,6 @@
 package com.novibe.dns.cloudflare.service;
 
+import com.novibe.common.exception.ProfileSetupException;
 import com.novibe.common.util.Log;
 import com.novibe.dns.cloudflare.http.CloudflareRuleClient;
 import com.novibe.dns.cloudflare.http.dto.request.CreateRuleRequest;
@@ -40,7 +41,7 @@ public class RuleService {
         Log.io("Posting new blocking rule");
         SingleRuleApiResponse result = cloudflareRuleClient.createBlockingRule(rule);
         if (!result.isSuccess()) {
-            Log.fail("Failed to set blocking rule: " + result.getErrors());
+            throw new ProfileSetupException("Failed to set blocking rule: " + result.getErrors());
         }
     }
 
@@ -73,7 +74,7 @@ public class RuleService {
         Log.io("Posting new override rule for IP: " + overrideIp);
         SingleRuleApiResponse result = cloudflareRuleClient.createBlockingRule(rule);
         if (!result.isSuccess()) {
-            Log.fail("Failed to set override rule: " + result.getErrors());
+            throw new ProfileSetupException("Failed to set override rule for IP %s: %s".formatted(overrideIp, result.getErrors()));
         }
     }
 

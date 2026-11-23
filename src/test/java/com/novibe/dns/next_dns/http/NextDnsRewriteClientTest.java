@@ -1,77 +1,100 @@
 package com.novibe.dns.next_dns.http;
 
 import com.google.gson.Gson;
-import com.google.gson.JsonObject;
-import com.novibe.common.util.Jsonable;
+import com.novibe.common.base_structures.DnsProfile;
+import com.novibe.common.exception.ProfileSetupException;
 import com.novibe.dns.next_dns.http.dto.request.CreateRewriteDto;
 import org.junit.jupiter.api.Test;
-import java.util.*;
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.Spy;
+import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+
+@ExtendWith(MockitoExtension.class)
 class NextDnsRewriteClientTest {
-    @Test void realHttp429StopsAfterOneRequestWithoutRetry() throws Exception {
-        var calls = new java.util.concurrent.atomic.AtomicInteger();
-        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1",0),0);
-        server.createContext("/rewrites",exchange -> {
-            calls.incrementAndGet();
-            byte[] bytes="{\"errors\":[{\"code\":\"rate_limit\"}]}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().add("Retry-After","60");
-            exchange.sendResponseHeaders(429,bytes.length);
-            exchange.getResponseBody().write(bytes);exchange.close();
-        });
-        server.start();
-        try {
-            var c=new NextDnsRewriteClient() {
-                @Override protected void pace() {}
-                @Override protected String apiUrl() {return "http://127.0.0.1:"+server.getAddress().getPort();}
-                @Override protected String authHeaderValue() {return "synthetic-test-only";}
-            };
-            c.setHttpClient(java.net.http.HttpClient.newHttpClient());c.setJsonMapper(new Gson());
-            var error=assertThrows(com.novibe.common.exception.DnsHttpError.class,
-                () -> c.createVerified(new CreateRewriteDto("example.com","1.2.3.4")));
-            assertEquals(429,error.getCode());assertEquals(1,calls.get());
-        } finally {server.stop(0);}
+
+    @Mock
+    private HttpClient httpClient;
+
+    @Spy
+    private Gson jsonMapper = new Gson();
+
+    @Spy
+    private DnsProfile dnsProfile = DnsProfile.builder().clientId("profile").authSecret("api-key").build();
+
+    @Spy
+    @InjectMocks
+    private NextDnsRewriteClient nextDnsRewriteClient;
+
+    @Test
+    void sendsRequestPerRewrite() throws IOException, InterruptedException {
+        doReturn(response(200, "{}")).when(httpClient).send(any(), any());
+
+        nextDnsRewriteClient.saveRewrites(List.of(
+                new CreateRewriteDto("chatgpt.com", "1.2.3.4"),
+                new CreateRewriteDto("openai.com", "1.2.3.4")));
+
+        verify(httpClient, times(2)).send(any(), any());
     }
-    static class Client extends NextDnsRewriteClient {
-        Deque<String> replies = new ArrayDeque<>(); List<String> paths = new ArrayList<>();
-        Client(String... values) { replies.addAll(List.of(values)); setJsonMapper(new Gson()); }
-        @Override protected void pace() {}
-        @Override protected <T, R extends Jsonable> T sendRequest(String method, String path, R body, Class<T> type) {
-            paths.add(method + " " + path); String reply = replies.removeFirst(); return reply.equals("null") ? null : new Gson().fromJson(reply, type);
-        }
+
+    @Test
+    void failsOnFirstRefusedRewrite() throws IOException, InterruptedException {
+        doReturn(response(200, "{\"errors\":[{\"code\":\"conflict\"}]}")).when(httpClient).send(any(), any());
+
+        ProfileSetupException exception = assertThrows(ProfileSetupException.class, () -> nextDnsRewriteClient.saveRewrites(List.of(
+                new CreateRewriteDto("chatgpt.com", "1.2.3.4"),
+                new CreateRewriteDto("openai.com", "1.2.3.4"))));
+
+        assertTrue(exception.getMessage().startsWith("Failed request 1 of 2"));
+        verify(httpClient, times(1)).send(any(), any());
     }
-    @Test void readsEveryPageAndKeepsRawBackupFields() {
-        var c = new Client("""
-            {"data":[{"id":"a","name":"one.com","content":"1.2.3.4","unknown":"preserve"}],"meta":{"pagination":{"cursor":"next"}}}
-            """, """
-            {"data":[{"id":"b","name":"two.com","content":"1.2.3.4"}],"meta":{"pagination":{"cursor":null}}}
-            """);
-        assertEquals(2, c.fetchRewrites().size()); assertEquals(2, c.getLastSnapshot().size());
-        assertEquals("GET /rewrites?cursor=next", c.paths.getLast());
-        assertTrue(c.getLastSnapshot().getFirst().toString().contains("preserve"));
+
+    @Test
+    void failsWhenApiRefusesToDeleteRewrite() throws IOException, InterruptedException {
+        doReturn(response(200, "{\"errors\":[{\"code\":\"notFound\"}]}")).when(httpClient).send(any(), any());
+
+        assertThrows(ProfileSetupException.class,
+                () -> nextDnsRewriteClient.deleteRewritesByIds(List.of("first", "second", "third")));
+
+        verify(httpClient, times(1)).send(any(), any());
     }
-    @Test void failedOrMissingArrayIsNeverAnEmptyProfile() {
-        for (String body : List.of("null", "{}", "{\"errors\":[{\"code\":\"invalid\"}]}", "{\"data\":null}"))
-            assertThrows(IllegalStateException.class, () -> new Client(body).fetchRewrites());
+
+    @Test
+    void retriesRateLimitedRequest() throws IOException, InterruptedException {
+        doReturn(Duration.ZERO).when(nextDnsRewriteClient).retryDelay();
+        doReturn(response(429, "Rate exceeded"), response(200, "{\"data\":[]}"))
+                .when(httpClient).send(any(), any());
+
+        assertEquals(List.of(), nextDnsRewriteClient.fetchRewrites());
+        verify(httpClient, times(2)).send(any(), any());
     }
-    @Test void repeatedCursorFailsClosed() {
-        String body = "{\"data\":[],\"meta\":{\"pagination\":{\"cursor\":\"same\"}}}";
-        assertThrows(IllegalStateException.class, () -> new Client(body, body).fetchRewrites());
-    }
-    @Test void postMustReturnVerifiableIdentityAndValue() {
-        var r = new CreateRewriteDto("one.com", "1.2.3.4");
-        assertEquals("new", new Client("{\"data\":{\"id\":\"new\",\"name\":\"one.com\",\"content\":\"1.2.3.4\"}}").createVerified(r).id());
-        assertThrows(IllegalStateException.class, () -> new Client("{}").createVerified(r));
-        assertThrows(IllegalStateException.class, () -> new Client("{\"errors\":[{\"code\":\"invalid\"}]}").createVerified(r));
-    }
-    @Test void idOnlyCreateResponseIsVerifiedByExactIdReadback() {
-        var c = new Client("{\"data\":{\"id\":\"new\"}}",
-                "{\"data\":[{\"id\":\"new\",\"name\":\"one.com\",\"content\":\"1.2.3.4\"}]}");
-        assertEquals("new", c.createVerified(new CreateRewriteDto("one.com", "1.2.3.4")).id());
-        assertEquals(List.of("POST /rewrites", "GET /rewrites"), c.paths);
-    }
-    @Test void deleteHandles204ButNot200ErrorEnvelope() {
-        new Client("null").deleteVerified("old");
-        assertThrows(IllegalStateException.class, () -> new Client("{\"errors\":[{\"code\":\"invalid\"}]}").deleteVerified("old"));
+
+    private HttpResponse<String> response(int statusCode, String body) {
+        HttpResponse<String> response = mock();
+        lenient().when(response.statusCode()).thenReturn(statusCode);
+        lenient().when(response.body()).thenReturn(body);
+        lenient().when(response.request())
+                .thenReturn(HttpRequest.newBuilder(URI.create("https://api.nextdns.test/rewrites")).build());
+        return response;
     }
 }

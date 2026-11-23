@@ -1,6 +1,7 @@
 package com.novibe.common.data_sources;
 
 import com.novibe.common.config.EnvironmentVariables;
+import com.novibe.common.util.DataParser;
 import com.novibe.common.util.EnvParser;
 import org.springframework.stereotype.Service;
 
@@ -16,6 +17,7 @@ public class ExcludeRedirectSettingsLoader {
                 .flatMap(List::stream)
                 .map(String::trim)
                 .map(String::toLowerCase)
+                .map(DataParser::removeWWW)
                 .distinct()
                 .toList();
     }

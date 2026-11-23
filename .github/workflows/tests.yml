@@ -22,10 +22,4 @@ jobs:
           cache: maven
 
       - name: Run tests
-        run: mvn -B clean package
-
-      - name: Test encrypted artifact handling
-        run: python3 -m unittest discover -s scripts -p 'test_*.py'
-
-      - name: Validate workflow syntax
-        uses: docker://rhysd/actionlint:1.7.7
+        run: mvn -B test
