@@ -8,15 +8,15 @@ import java.util.List;
 @Service
 public class ExcludeRedirectCheckService {
 
-    private final List<DomainExclusion> ignoringList;
+    private final List<String> ignoringList;
 
     public ExcludeRedirectCheckService(ExcludeRedirectSettingsLoader excludeRedirectSettingsLoader) {
-        ignoringList = excludeRedirectSettingsLoader.loadIgnoredDomains().stream().map(DomainExclusion::parse).toList();
+        ignoringList = excludeRedirectSettingsLoader.loadIgnoredDomains();
     }
 
     public boolean shouldExclude(String domain) {
-        for (DomainExclusion ignored : ignoringList) {
-            if (ignored.matches(domain)) {
+        for (String ignored : ignoringList) {
+            if (domain.equals(ignored) || domain.endsWith("." + ignored)) {
                 return true;
             }
         }

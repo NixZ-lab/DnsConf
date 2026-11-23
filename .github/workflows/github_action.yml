@@ -2,54 +2,39 @@ name: DNS Block&Redirect Configurer cron task
 
 on:
   schedule:
-    - cron: '30 1 * * *' # Preserve 04:30 MSK; schedules only preview.
+    - cron: '37 1 * * *' # 04:37 Minsk; non-round minute reduces dropped/delayed schedules
   workflow_dispatch:
     inputs:
-      mode:
-        description: Preview, Sync onboarded profiles, or reviewed migration
-        type: choice
-        options: [preview, sync, dry-run, adopt, apply]
-        default: preview
       environment:
-        description: DNS environment (Sync supports ALL; adopt/apply require one)
+        description: Select one existing NextDNS environment
         type: choice
-        options: [ALL, DNS, DNS_WIFE, DNS_DIRECTOR, DNS_PV]
-        default: ALL
-      review_run_id:
-        description: Successful preview run ID at this exact commit (required for apply)
-        type: string
-      adopt_ids:
-        description: Exact comma-separated legacy rewrite IDs reviewed in the preview (adopt mode only)
-        type: string
-      max_delete:
-        description: Maximum reviewed deletions (default forbids deletion)
-        type: string
-        default: '0'
-      initialize:
-        description: First apply without ownership journal; existing rules remain unmanaged
+        required: true
+        default: DNS
+        options: [DNS, DNS_WIFE, DNS_DIRECTOR, DNS_PV]
+      confirm_write:
+        description: Confirm running original upstream code with LIVE NextDNS writes
         type: boolean
+        required: true
         default: false
 
 permissions:
   contents: read
-  actions: read
-
-# Serialize across branches and environments; never cancel an in-progress mutation.
-concurrency:
-  group: nextdns-sync
-  cancel-in-progress: false
 
 jobs:
-  sync:
-    name: ${{ matrix.environment }} / ${{ inputs.mode || 'dry-run' }}
+  build:
+    name: ${{ matrix.environment }}
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       max-parallel: 1
       matrix:
-        environment: ${{ fromJSON((github.event_name == 'schedule' || inputs.environment == 'ALL') && '["DNS","DNS_WIFE","DNS_DIRECTOR","DNS_PV"]' || format('["{0}"]', inputs.environment)) }}
+        environment: ${{ fromJSON(github.event_name == 'schedule' && '["DNS","DNS_WIFE","DNS_DIRECTOR","DNS_PV"]' || format('["{0}"]', inputs.environment)) }}
     environment: ${{ matrix.environment }}
+    concurrency:
+      group: nextdns-upstream-${{ matrix.environment }}
+      cancel-in-progress: false
+
     env:
       DNS: ${{ vars.DNS }}
       BLOCK: ${{ vars.BLOCK }}
@@ -58,107 +43,53 @@ jobs:
       DONOR_DNS: ${{ vars.DONOR_DNS }}
       CLIENT_ID: ${{ secrets.CLIENT_ID }}
       AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
-      SYNC_DIR: nextdns-sync
-      DRY_RUN: ${{ (inputs.mode == 'apply' || inputs.mode == 'adopt') && 'false' || 'true' }}
-      SYNC_MODE: ${{ inputs.mode || 'dry-run' }}
-      ADOPT_IDS: ${{ inputs.mode == 'adopt' && inputs.adopt_ids || '' }}
-      MAX_DELETE: ${{ inputs.max_delete || '0' }}
-      INITIALIZE: ${{ inputs.initialize && 'true' || 'false' }}
-      REVIEW_RUN_ID: ${{ inputs.review_run_id }}
-      SELECTED_ENVIRONMENT: ${{ inputs.environment }}
-      SYNC_ENABLED: ${{ vars.SYNC_ENABLED || 'false' }}
-      SYNC_MAX_CREATE: ${{ vars.SYNC_MAX_CREATE || '20' }}
-      SYNC_MAX_UPDATE: ${{ vars.SYNC_MAX_UPDATE || '20' }}
-      SYNC_MAX_DELETE: ${{ vars.SYNC_MAX_DELETE || '20' }}
-      SYNC_MAX_DELETE_PERCENT: ${{ vars.SYNC_MAX_DELETE_PERCENT || '5' }}
-      SYNC_ALLOW_NEW_WWW: ${{ vars.SYNC_ALLOW_NEW_WWW || 'false' }}
-      SYNC_ALLOW_NEW_OPENAI: ${{ vars.SYNC_ALLOW_NEW_OPENAI || 'false' }}
-      GH_TOKEN: ${{ github.token }}
+      UPSTREAM_AUTORUN_ENABLED: ${{ vars.UPSTREAM_AUTORUN_ENABLED }}
+      EVENT_NAME: ${{ github.event_name }}
+      CONFIRM_WRITE: ${{ inputs.confirm_write }}
       TZ: Europe/Moscow
+
     steps:
-      - uses: actions/checkout@v5
-      - name: Validate execution scope
-        id: scope
+      - name: Guard against accidental live writes or empty sources
+        id: gate
+        shell: bash
         run: |
-          python3 scripts/sync_scope.py
-      - uses: actions/setup-java@v5
-        if: steps.scope.outputs.skip != 'true'
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == schedule && "$UPSTREAM_AUTORUN_ENABLED" != true ]]; then
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+            echo "Schedule not armed for this environment: UPSTREAM_AUTORUN_ENABLED is not true." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [[ "$EVENT_NAME" == workflow_dispatch && "$CONFIRM_WRITE" != true ]]; then
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+            echo 'Manual run skipped: confirm_write was not checked.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [[ -z "$DNS" || -z "$CLIENT_ID" || -z "$AUTH_SECRET" ]]; then
+            echo 'DNS, CLIENT_ID or AUTH_SECRET is missing.' >&2
+            exit 1
+          fi
+          if [[ -z "$BLOCK" && -z "$REDIRECT" ]]; then
+            echo 'Both BLOCK and REDIRECT are empty. Refusing to run upstream removeAll().' >&2
+            exit 1
+          fi
+          echo 'run=true' >> "$GITHUB_OUTPUT"
+
+      - name: Checkout repository
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 26
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '26'
           cache: maven
-      - name: Build and test
-        if: steps.scope.outputs.skip != 'true'
+
+      - name: Build with Maven
+        if: steps.gate.outputs.run == 'true'
         run: mvn -B clean package
-      - name: Load reviewed preview
-        if: steps.scope.outputs.skip != 'true' && (inputs.mode == 'apply' || inputs.mode == 'adopt')
-        run: python3 scripts/sync_artifacts.py plan '${{ matrix.environment }}' --run-id "$REVIEW_RUN_ID"
-      - name: Restore latest ownership state
-        if: steps.scope.outputs.skip != 'true'
-        env:
-          DRY_RUN: ${{ inputs.mode == 'sync' && 'false' || env.DRY_RUN }}
-        run: python3 scripts/sync_artifacts.py state '${{ matrix.environment }}'
-      - name: Prepare preview and backup (read only)
-        if: steps.scope.outputs.skip != 'true' && inputs.mode != 'apply' && inputs.mode != 'adopt'
-        run: java --enable-preview -jar target/dns-block-and-redirect-configurer-1.0-SNAPSHOT.jar
-      - name: Encrypt preview and backup
-        if: steps.scope.outputs.skip != 'true'
-        run: python3 scripts/sync_artifacts.py seal-preview '${{ matrix.environment }}'
-      - name: Preserve reviewed plan and backup before any mutations
-        if: steps.scope.outputs.skip != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: nextdns-preview-${{ matrix.environment }}
-          path: sealed/preview.bin
-          if-no-files-found: error
-          retention-days: 90
-      - name: Apply reviewed plan or adopt reviewed IDs
-        if: steps.scope.outputs.skip != 'true' && (inputs.mode == 'apply' || inputs.mode == 'adopt')
-        run: java --enable-preview -jar target/dns-block-and-redirect-configurer-1.0-SNAPSHOT.jar
-      - name: Sync automatically checked plan
-        if: steps.scope.outputs.skip != 'true' && inputs.mode == 'sync'
-        env:
-          DRY_RUN: 'false'
-        run: java --enable-preview -jar target/dns-block-and-redirect-configurer-1.0-SNAPSHOT.jar
-      - name: Encrypt journal even after partial failure
-        if: always() && steps.scope.outputs.skip != 'true' && (inputs.mode == 'apply' || inputs.mode == 'adopt' || inputs.mode == 'sync')
-        run: python3 scripts/sync_artifacts.py seal-state '${{ matrix.environment }}'
-      - name: Preserve journal even after partial failure
-        if: always() && steps.scope.outputs.skip != 'true' && (inputs.mode == 'apply' || inputs.mode == 'adopt' || inputs.mode == 'sync')
-        uses: actions/upload-artifact@v4
-        with:
-          name: nextdns-state-${{ matrix.environment }}
-          path: sealed/state.bin
-          if-no-files-found: warn
-          retention-days: 90
 
-      - name: Profile result summary
-        if: always()
-        env:
-          JOB_STATUS: ${{ job.status }}
-          PROFILE_SKIPPED: ${{ steps.scope.outputs.skip }}
-          PROFILE_ENVIRONMENT: ${{ matrix.environment }}
-        run: python3 scripts/sync_report.py
-      - name: Preserve public counts only
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nextdns-result-${{ matrix.environment }}
-          path: profile-result-${{ matrix.environment }}.json
-          retention-days: 90
-          if-no-files-found: warn
-
-  report:
-    name: All selected profiles report
-    needs: sync
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: nextdns-result-*
-          path: results
-          merge-multiple: true
-      - name: Summarize selected profiles
-        run: python3 scripts/sync_report.py --aggregate
+      - name: Run original upstream application (mutates NextDNS)
+        if: steps.gate.outputs.run == 'true'
+        run: java --enable-preview -jar target/*.jar

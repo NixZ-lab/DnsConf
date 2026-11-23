@@ -1,6 +1,7 @@
 package com.novibe.dns.cloudflare.service;
 
 import com.novibe.common.base_structures.BypassRoute;
+import com.novibe.common.exception.ProfileSetupException;
 import com.novibe.common.service.ExcludeRedirectCheckService;
 import com.novibe.common.util.FunctionWrapper;
 import com.novibe.common.util.Log;
@@ -32,6 +33,7 @@ public class ListService {
 
     private static final String BLOCK_LIST_NAME_PREFIX = "Blocked websites by script";
     private static final String OVERRIDE_LIST_NAME_PREFIX = "Override websites by script";
+    private static final String WILDCARD_PREFIX = "*.";
 
     private final CloudflareListClient cloudflareListClient;
     private final ExcludeRedirectCheckService excludeRedirectCheckService;
@@ -119,7 +121,8 @@ public class ListService {
                 }
             }
             if (!errors.isEmpty()) {
-                Log.fail("Failed to save new lists (%s of %s): %s".formatted(errors.size(), createListRequests.size(), errors));
+                throw new ProfileSetupException("Failed to save new lists (%s of %s): %s"
+                        .formatted(errors.size(), createListRequests.size(), errors));
             }
             return result;
         } catch (ExecutionException | InterruptedException e) {
@@ -169,8 +172,16 @@ public class ListService {
     }
 
 
-    private List<Item> websiteAsItem(List<String> urlsToBlock) {
-        return urlsToBlock.stream().map(Item::new).toList();
+    /**
+     * Cloudflare refuses a whole list when one item is a wildcard, and its Domain selector already covers subdomains,
+     * so "*.example.com" goes in as "example.com". Lists that hold the same domains in both forms collapse into one.
+     */
+    static List<Item> websiteAsItem(List<String> websites) {
+        return websites.stream()
+                .map(website -> website.startsWith(WILDCARD_PREFIX) ? website.substring(WILDCARD_PREFIX.length()) : website)
+                .distinct()
+                .map(Item::new)
+                .toList();
     }
 
     static <T> List<List<T>> cutChunks(List<T> list) {
