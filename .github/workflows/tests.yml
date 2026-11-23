@@ -27,5 +27,8 @@ jobs:
       - name: Test backup/encryption and full NextDNS migration offline
         run: python3 -m unittest scripts.test_migrate_nextdns
 
+      - name: Test successful-migration gate for scheduled sync
+        run: python3 -m unittest scripts.test_nextdns_activation
+
       - name: Run tests
         run: mvn -B test
