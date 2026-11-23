@@ -48,7 +48,7 @@ class CapacityAuditTest(unittest.TestCase):
             "REDIRECT": "https://example.invalid/hosts",
             "EXCLUDE_REDIRECT": "",
         }
-        source = "1.1.1.1 keep.example\\n1.1.1.1 new.example\\n"
+        source = "1.1.1.1 keep.example\n1.1.1.1 new.example\n"
         existing = json.dumps({"data": [
             {"name": "keep.example", "content": "1.1.1.1"},
             {"name": "old.example", "content": "1.1.1.1"},
