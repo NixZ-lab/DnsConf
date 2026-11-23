@@ -96,13 +96,24 @@ def audit():
     current_names = set(old_by_name)
     potentially_deleted_exclusions = sum(is_excluded(n, exclusions) for n in current_names)
     estimated_unique_total = len(current_names | desired)
-    prospective_additions = len(desired - current_names)
+    matched = current_names & desired
+    existing_only = current_names - desired
+    new_only = desired - current_names
+    prospective_additions = len(new_only)
+    excess_source = max(0, len(desired) - MAX_REWRITES)
+    # A capacity lower bound, never permission to delete or adopt an existing record.
+    minimum_retire = (max(0, len(existing) + prospective_additions - MAX_REWRITES)
+                      if excess_source == 0 else "N/A (source exceeds limit)")
 
     summary = (
         "### NextDNS read-only capacity preflight\n"
         f"- Current rewrites: **{len(existing)}**\n"
         f"- Unique domains in REDIRECT sources after original www normalization: **{len(wanted)}**\n"
         f"- Desired domains after EXCLUDE_REDIRECT: **{len(desired)}**\n"
+        f"- Domains already present in both source and profile: **{len(matched)}**\n"
+        f"- Existing domains absent from current source (review candidates): **{len(existing_only)}**\n"
+        f"- Minimum existing entries to retire for full source: **{minimum_retire}**\n"
+        f"- Domains by which current source alone exceeds capacity: **{excess_source}**\n"
         f"- New domain names required: **{prospective_additions}**\n"
         f"- Conservative combined domain count: **{estimated_unique_total}**\n"
         f"- Existing domains affected by EXCLUDE_REDIRECT: **{potentially_deleted_exclusions}**\n"
