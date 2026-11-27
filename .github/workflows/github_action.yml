@@ -89,8 +89,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SHA=$(curl -fsSL --retry 3 https://api.github.com/repos/NixZ-lab/my-dns-config/commits/main |
-            python3 -c 'import sys,json; print(json.load(sys.stdin)["sha"])')
+          SHA=$(git ls-remote --exit-code \
+            https://github.com/NixZ-lab/my-dns-config.git \
+            refs/heads/main | cut -f1)
           [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
           echo "hosts_sha=$SHA" >> "$GITHUB_OUTPUT"
 
